@@ -1,0 +1,10 @@
+# Netlify: bu klasörü sürükle-bırak ile yükleyebilir ya da repo bağlayabilirsiniz.
+[build]
+  publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
+    X-Frame-Options = "DENY"

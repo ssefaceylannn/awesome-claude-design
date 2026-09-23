@@ -1,0 +1,4 @@
+# Repo Netlify'a bağlanırsa siteyi etiket-takip klasöründen yayınla.
+[build]
+  base = "etiket-takip"
+  publish = "."

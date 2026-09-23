@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Etiket Takip</title>
+  <meta name="description" content="Trendyol, ikas ve Shopify kargo etiketlerini okuyup sipariş, ürün ve kampanya raporu çıkaran uygulama.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23166534'/%3E%3Cpath d='M8 9v14M11 9v14M14 9v14M18 9v14M20 9v14M24 9v14' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <strong>Etiket Takip</strong>
+        <small id="storageInfo">Veriler bu tarayıcıda saklanır</small>
+      </div>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-view="import">Etiket Yükle</button>
+      <button class="tab" data-view="report">Rapor</button>
+      <button class="tab" data-view="days">Günler</button>
+      <button class="tab" data-view="scan">Barkod Okut</button>
+      <button class="tab" data-view="campaigns">Kampanyalar</button>
+      <button class="tab" data-view="settings">Ayarlar</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ============ ETİKET YÜKLE ============ -->
+    <section class="view active" id="view-import">
+      <div class="card">
+        <h2>Etiket PDF'lerini yükle</h2>
+        <p class="muted">Trendyol, ikas ve Shopify mağazalarınızın etiket PDF'lerini sürükleyip bırakın ya da seçin. Birden fazla dosya aynı anda yüklenebilir. Kayıt otomatik yapılır.</p>
+        <label class="drop" id="dropZone">
+          <input type="file" id="fileInput" accept="application/pdf,.pdf" multiple hidden>
+          <span class="drop-icon" aria-hidden="true">⇪</span>
+          <span><b>PDF dosyalarını buraya bırakın</b><br><span class="muted">veya tıklayıp seçin</span></span>
+        </label>
+        <div class="row gap wrap mt">
+          <label class="field">
+            <span>Kayıt tarihi</span>
+            <select id="dateMode">
+              <option value="file">Dosya adındaki tarih (yoksa bugün)</option>
+              <option value="manual">Seçtiğim tarih</option>
+            </select>
+          </label>
+          <label class="field" id="manualDateWrap" hidden>
+            <span>Tarih</span>
+            <input type="date" id="manualDate">
+          </label>
+        </div>
+      </div>
+
+      <div class="card" id="importResult" hidden>
+        <div class="row between wrap gap">
+          <h2>Yükleme sonucu</h2>
+          <div class="row gap">
+            <button class="btn" id="btnGoReport">Raporu aç</button>
+            <button class="btn danger ghost" id="btnUndoImport">Bu yüklemeyi geri al</button>
+          </div>
+        </div>
+        <div class="kpis" id="importKpis"></div>
+        <div id="importLog" class="log"></div>
+        <div class="table-wrap"><table class="tbl" id="importTable"></table></div>
+      </div>
+
+      <div class="card">
+        <h2>Son yüklemeler</h2>
+        <div class="table-wrap"><table class="tbl" id="batchTable"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ RAPOR ============ -->
+    <section class="view" id="view-report">
+      <div class="card">
+        <div class="row gap wrap end">
+          <label class="field"><span>Başlangıç</span><input type="date" id="repFrom"></label>
+          <label class="field"><span>Bitiş</span><input type="date" id="repTo"></label>
+          <div class="quick">
+            <button class="chip" data-range="today">Bugün</button>
+            <button class="chip" data-range="yesterday">Dün</button>
+            <button class="chip" data-range="week">Son 7 gün</button>
+            <button class="chip" data-range="month">Bu ay</button>
+          </div>
+          <label class="field"><span>Platform</span><select id="repPlatform"></select></label>
+          <label class="field"><span>Mağaza</span><select id="repStore"></select></label>
+        </div>
+      </div>
+
+      <div class="kpis" id="repKpis"></div>
+
+      <div class="card">
+        <div class="row between wrap gap">
+          <div>
+            <h2>Ürün listesi (toplama listesi)</h2>
+            <p class="muted small">Satırları sürükleyerek ya da ▲▼ ile sıralayın; sıra otomatik kaydedilir ve indirmelerde bu sıra kullanılır.</p>
+          </div>
+          <div class="row gap wrap">
+            <select id="sortPreset" aria-label="Hazır sıralama">
+              <option value="">Sıralama…</option>
+              <option value="alpha">A → Z</option>
+              <option value="qty">Toplam adede göre</option>
+            </select>
+            <button class="btn" id="btnCsvProducts">Excel (CSV) indir</button>
+            <button class="btn" id="btnPrint">Yazdır / PDF</button>
+          </div>
+        </div>
+        <div class="table-wrap"><table class="tbl" id="productTable"></table></div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <h2>Mağaza bazında</h2>
+          <div class="table-wrap"><table class="tbl" id="storeTable"></table></div>
+        </div>
+        <div class="card">
+          <h2>Uygulanan kampanyalar</h2>
+          <div class="table-wrap"><table class="tbl" id="campTable"></table></div>
+          <button class="btn ghost mt" id="btnReapply">Kampanyaları bu aralığa yeniden uygula</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row between wrap gap">
+          <h2>Siparişler</h2>
+          <div class="row gap">
+            <input type="search" id="orderSearch" placeholder="Sipariş no, alıcı, ürün ara…">
+            <button class="btn" id="btnCsvOrders">Siparişleri indir</button>
+          </div>
+        </div>
+        <div class="table-wrap"><table class="tbl" id="orderTable"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ GÜNLER ============ -->
+    <section class="view" id="view-days">
+      <div class="card">
+        <h2>Son 30 gün</h2>
+        <div id="dayChart" class="chart"></div>
+      </div>
+      <div class="card">
+        <div class="row between wrap gap">
+          <h2>Gün gün kayıtlar</h2>
+          <span class="muted small" id="daysInfo"></span>
+        </div>
+        <div class="table-wrap"><table class="tbl" id="daysTable"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ BARKOD ============ -->
+    <section class="view" id="view-scan">
+      <div class="card">
+        <h2>Barkod okut</h2>
+        <p class="muted">Barkod okuyucuyla etiketteki <b>sipariş barkodunu</b> ya da <b>kargo barkodunu</b> okutun (veya yazıp Enter'a basın). Sipariş bulunursa içeriği gösterilir ve “kontrol edildi” olarak işaretlenir.</p>
+        <div class="row gap wrap">
+          <input id="scanInput" class="scan-input" placeholder="Barkodu okutun…" autocomplete="off">
+          <button class="btn" id="btnCamera" hidden>Kamerayla okut</button>
+        </div>
+        <video id="camVideo" playsinline muted hidden></video>
+        <div id="scanResult" class="mt"></div>
+      </div>
+      <div class="card">
+        <div class="row between wrap gap">
+          <h2>Bugünün kontrol durumu</h2>
+          <label class="field"><span>Gün</span><input type="date" id="scanDate"></label>
+        </div>
+        <div class="kpis" id="scanKpis"></div>
+        <div class="table-wrap"><table class="tbl" id="scanTable"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ KAMPANYALAR ============ -->
+    <section class="view" id="view-campaigns">
+      <div class="card">
+        <h2 id="campFormTitle">Yeni kampanya</h2>
+        <form id="campForm" class="form-grid">
+          <input type="hidden" name="id">
+          <label class="field wide"><span>Kampanya adı</span><input name="name" required placeholder="Örn. Kakao 2 al 1 bedava"></label>
+          <label class="field"><span>Platform</span><select name="platform"></select></label>
+          <label class="field"><span>Mağaza</span><select name="store"></select></label>
+          <label class="field wide"><span>Kampanyalı ürün</span><input name="product" list="productList" required placeholder="Etiketteki ürün adı"></label>
+          <label class="field"><span>Kaç adet alınınca</span><input name="buyQty" type="number" min="1" value="1" required></label>
+          <label class="field"><span>Kaç adet eklenecek</span><input name="getQty" type="number" min="1" value="1" required></label>
+          <label class="field"><span>Uygulama</span>
+            <select name="mode">
+              <option value="every">Her X adette bir (katlanır)</option>
+              <option value="once">Sipariş başına bir kez</option>
+            </select>
+          </label>
+          <label class="field wide"><span>Eklenecek ürün (boşsa aynı ürün)</span><input name="giftProduct" list="productList" placeholder="Hediye ürün — boş bırakılırsa aynı ürün"></label>
+          <label class="field"><span>Başlangıç</span><input name="start" type="date"></label>
+          <label class="field"><span>Bitiş</span><input name="end" type="date"></label>
+          <label class="check"><input type="checkbox" name="active" checked> Aktif</label>
+          <p class="muted small wide" id="campPreview"></p>
+          <div class="row gap wide">
+            <button class="btn primary" type="submit">Kaydet</button>
+            <button class="btn ghost" type="button" id="btnCampCancel">Temizle</button>
+          </div>
+        </form>
+        <datalist id="productList"></datalist>
+      </div>
+      <div class="card">
+        <h2>Kampanyalar</h2>
+        <p class="muted small">Kampanyalar etiket yüklenirken siparişin tarihine, platformuna ve mağazasına göre otomatik uygulanır. Sonradan değiştirdiğiniz kampanyayı geçmiş günlere uygulamak için Rapor sekmesindeki “yeniden uygula” düğmesini kullanın.</p>
+        <div class="table-wrap"><table class="tbl" id="campListTable"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ AYARLAR ============ -->
+    <section class="view" id="view-settings">
+      <div class="card">
+        <h2>Mağazalar</h2>
+        <p class="muted small">Etiketlerden otomatik algılanır (Gönderici alanı). Platform yanlış algılanırsa buradan düzeltebilirsiniz.</p>
+        <div class="table-wrap"><table class="tbl" id="storesTable"></table></div>
+      </div>
+      <div class="card">
+        <h2>Ürün adları</h2>
+        <p class="muted small">Farklı mağazalarda farklı yazılan aynı ürünü tek isimde birleştirmek için “Raporda görünen ad” sütununu doldurun. Raporlar ve kampanyalar bu adı kullanır.</p>
+        <div class="table-wrap"><table class="tbl" id="aliasTable"></table></div>
+      </div>
+      <div class="card">
+        <h2>Veri saklama ve yedek</h2>
+        <div class="row gap wrap end">
+          <label class="field"><span>Saklama süresi (gün)</span><input type="number" id="retention" min="30" max="3650"></label>
+          <button class="btn" id="btnSaveRetention">Kaydet</button>
+        </div>
+        <p class="muted small">Süresi dolan kayıtlar uygulama açılışında otomatik silinir. Veriler yalnızca bu tarayıcıda durur; tarayıcı verisini temizlerseniz kaybolur. Düzenli yedek alın.</p>
+        <div class="row gap wrap mt">
+          <button class="btn primary" id="btnBackup">Yedek indir (JSON)</button>
+          <label class="btn">Yedekten geri yükle<input type="file" id="restoreInput" accept=".json,application/json" hidden></label>
+          <button class="btn danger ghost" id="btnWipe">Tüm verileri sil</button>
+        </div>
+        <p class="muted small" id="lastBackupInfo"></p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Yazdırma için -->
+  <div id="printArea"></div>
+
+  <dialog id="orderDialog">
+    <form method="dialog">
+      <div id="orderDialogBody"></div>
+      <div class="row gap right mt">
+        <button class="btn danger ghost" value="delete" id="btnDeleteOrder">Siparişi sil</button>
+        <button class="btn primary" value="close">Kapat</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script src="vendor/pdf.min.js"></script>
+  <script src="js/parser.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
