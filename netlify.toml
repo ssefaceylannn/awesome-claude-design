@@ -1,4 +1,21 @@
-# Repo Netlify'a bağlanırsa siteyi etiket-takip klasöründen yayınla.
+# Repo Netlify'a bağlandığında uygulama etiket-takip klasöründen derlenir.
+# Ayrıntılı ayarlar: etiket-takip/netlify.toml
 [build]
   base = "etiket-takip"
-  publish = "."
+  publish = "public"
+  command = "echo 'Derleme gerekmiyor'"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "same-origin"
+    X-Frame-Options = "DENY"
+    Permissions-Policy = "camera=(self), microphone=(), geolocation=()"

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Giriş · Etiket Takip</title>
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/css/app.css">
+  <script>try{var t=localStorage.getItem('et-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+  <div class="login-wrap">
+    <section class="login-art">
+      <div class="brandmark" style="padding:0">
+        <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 6v12M8 6v12M11 6v12M15 6v12M17 6v12M20 6v12"/></svg></div>
+        <div><b>Etiket Takip</b><small style="color:#a9c8b6">Sipariş &amp; Üretim Planlama</small></div>
+      </div>
+      <div>
+        <h1>Tüm mağazalarınızın siparişleri tek ekranda.</h1>
+        <p>Trendyol, ikas ve Shopify etiketlerini okuyun; kampanyaları otomatik uygulayın, günlük üretim listesini çıkarın.</p>
+        <ul>
+          <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Etiketten otomatik sipariş ve ürün okuma</li>
+          <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Akıllı ürün eşleştirme ve mükerrer kontrolü</li>
+          <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Mağaza ve platform bazlı kampanyalar</li>
+          <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Sıralı Excel üretim listesi, 1 yıllık arşiv</li>
+        </ul>
+      </div>
+      <small style="color:#7d9b89">Yetkisiz erişim yasaktır. Tüm işlemler kayıt altındadır.</small>
+    </section>
+    <section class="login-form">
+      <form class="login-card stack" id="loginForm" novalidate>
+        <div>
+          <h2>Giriş yap</h2>
+          <p class="muted">Size verilen kullanıcı adı ve şifre ile giriş yapın.</p>
+        </div>
+        <div id="loginMsg"></div>
+        <label class="f">Kullanıcı adı<input class="input" name="username" autocomplete="username" autocapitalize="none" required autofocus></label>
+        <label class="f">Şifre<input class="input" name="password" type="password" autocomplete="current-password" required></label>
+        <label class="check"><input type="checkbox" name="remember"> Bu cihazda 30 gün oturum açık kalsın</label>
+        <button class="btn primary lg" type="submit" id="loginBtn">Giriş yap</button>
+      </form>
+    </section>
+  </div>
+  <script type="module" src="/assets/js/login.js"></script>
+</body>
+</html>
