@@ -4,8 +4,38 @@
 import { fold } from './text.js';
 import { createMatcher } from './matcher.js';
 
+/**
+ * Marka → satıldığı mağazalar. Ayarlanmamışsa (null) varsayılan: "Power Vital" markası
+ * yalnızca adında Power Vital geçen mağazalarda satılır. Boş liste = tüm mağazalar.
+ */
+export function brandRules(config) {
+  const saved = config.settings && config.settings.brandStores;
+  if (saved) return saved;
+  const stores = config.stores || [];
+  const out = {};
+  const brands = [...new Set((config.products || []).map((p) => p.brand).filter(Boolean))];
+  for (const b of brands) {
+    if (fold(b).replace(/\s+/g, '') !== 'powervital') continue;
+    const ids = stores.filter((st) => fold(st.name).replace(/\s+/g, '').includes('powervital')).map((st) => st.id);
+    if (ids.length) out[b] = ids;
+  }
+  return out;
+}
+
 export function createContext(config) {
   const match = createMatcher(config);
+  // Marka kuralı: bir mağazanın etiketleri yalnızca o mağazada satılan markaların ürünleriyle eşleşir
+  const rules = new Map(Object.entries(brandRules(config)).filter(([, ids]) => ids && ids.length).map(([b, ids]) => [fold(b), new Set(ids)]));
+  const storeMatchers = new Map();
+  const matchFor = (store) => {
+    if (!rules.size || !store) return match;
+    if (!storeMatchers.has(store.id)) {
+      const ok = (p) => { const r = p.brand && rules.get(fold(p.brand)); return !r || r.has(store.id); };
+      const all = config.products || [];
+      storeMatchers.set(store.id, all.every(ok) ? match : createMatcher({ ...config, products: all.filter(ok) }));
+    }
+    return storeMatchers.get(store.id);
+  };
   // Pasif mağazalar da çözülür (geçmiş siparişleri "Tanımsız" görünmesin)
   const stores = config.stores || [];
   const senderMap = new Map();
@@ -29,9 +59,15 @@ export function createContext(config) {
 
   const products = config.products || [];
   const productsById = new Map(products.map((p) => [p.id, p]));
+  // Farklı markalarda aynı adlı ürünler ekranda "Ad (Marka)" olarak gösterilir
+  const nameKey = (p) => fold(p.name).replace(/\s+/g, '');
+  const nameCount = new Map();
+  for (const p of products) nameCount.set(nameKey(p), (nameCount.get(nameKey(p)) || 0) + 1);
+  const labelOf = (p) => (!p ? '(silinmiş ürün)' : nameCount.get(nameKey(p)) > 1 && p.brand ? `${p.name} (${p.brand})` : p.name);
+  const label = (id) => labelOf(productsById.get(id));
   // Arşivlenen kampanyalar kendi tarih aralığında geçmiş raporlarda sayılmaya devam eder
   const campaigns = (config.campaigns || []).filter((c) => c.active).map(normCampaign);
-  return { config, match, resolveStore, products, productsById, campaigns, stores: config.stores || [] };
+  return { config, match, matchFor, resolveStore, products, productsById, label, labelOf, campaigns, stores: config.stores || [] };
 }
 
 /**
@@ -99,6 +135,20 @@ function byBrand(m, store, sender, ctx) {
 }
 
 /**
+ * Mağazadan bağımsız bakıldığında belirsiz ama aslında aynı adlı farklı marka ürünleri arasında
+ * kalan eşleşme (ör. "Karamürver ve Karadut Özü": Ultra Natura / Power Vital). Raporlarda etiketin
+ * mağazasına göre doğru ürün seçildiği için bekleyen iş sayılmaz. Dönen dizi: aday ürün kimlikleri.
+ */
+export function brandResolved(m, ctx) {
+  if (!m || m.method !== 'ambiguous' || !m.candidates || m.candidates.length < 2) return null;
+  const ps = m.candidates.map((id) => ctx.productsById.get(id)).filter(Boolean);
+  const key = (p) => fold(p.name).replace(/\s+/g, '');
+  const same = ps.filter((p) => key(p) === key(ps[0]));
+  if (same.length < 2 || same.some((p) => !p.brand) || new Set(same.map((p) => fold(p.brand))).size !== same.length) return null;
+  return same.map((p) => p.id);
+}
+
+/**
  * Eski sistemden aktarılan günlük özet ("arşiv"): sipariş detayı yok; etiket ve
  * kampanya adetleri o gün kaydedildiği gibi sabit kullanılır, yeniden hesaplanmaz.
  */
@@ -106,7 +156,7 @@ function computeSummary(o, ctx) {
   const store = ctx.resolveStore(o.sender);
   const platform = (store && store.platform) || o.platform || '';
   const toLines = (list) => (list || []).flatMap((it) => {
-    const m = byBrand(ctx.match(it.name), store, o.sender, ctx);
+    const m = byBrand(ctx.matchFor(store)(it.name), store, o.sender, ctx);
     if (m.parts && m.parts.length) return m.parts.map((p) => ({ raw: it.name, qty: it.qty, productId: p.productId, ignored: false, method: m.method, mult: p.qty, units: it.qty * p.qty, candidates: [] }));
     return [{ raw: it.name, qty: it.qty, productId: m.productId, ignored: !!m.ignored, method: m.method, mult: 1, units: it.qty, candidates: m.candidates }];
   });
@@ -120,7 +170,7 @@ export function computeOrder(o, ctx) {
   const store = ctx.resolveStore(o.sender);
   const platform = (store && store.platform) || o.platform || '';
   const lines = (o.items || []).flatMap((it) => {
-    const m = byBrand(ctx.match(it.name), store, o.sender, ctx);
+    const m = byBrand(ctx.matchFor(store)(it.name), store, o.sender, ctx);
     // Set / birleşik ad: her ürün ayrı satır olarak sayılır
     if (m.parts && m.parts.length) {
       return m.parts.map((p) => ({ raw: it.name, qty: it.qty, productId: p.productId, ignored: false, method: m.method, bundle: true, mult: p.qty, units: it.qty * p.qty, candidates: [] }));
@@ -208,7 +258,7 @@ export function aggregate(orders, ctx, filter = {}) {
     if (o.summary) R.archiveDays = (R.archiveDays || new Set()).add(o.date);
     if (o.checked) R.checked++;
     const sk = c.store ? c.store.id : '?' + fold(o.sender);
-    if (!R.stores.has(sk)) R.stores.set(sk, { store: c.store, sender: o.sender, platform: c.platform, orders: 0, labelUnits: 0, campaignUnits: 0, campaignOrders: 0, products: new Map() });
+    if (!R.stores.has(sk)) R.stores.set(sk, { store: c.store, sender: o.sender, archive: !c.store && !!o.summary, platform: c.platform, orders: 0, labelUnits: 0, campaignUnits: 0, campaignOrders: 0, products: new Map() });
     const S = R.stores.get(sk);
     S.orders += orderCount;
     for (const l of c.lines) {

@@ -1,6 +1,8 @@
 // Uygulama kabuğu: kenar menü, üst bar, yönlendirici.
 import { html, mount, icon, esc, toast, $ } from './core/ui.js';
 import { api, boot, state, can } from './core/api.js';
+import { isArchiveOnly } from './shared/matcher.js';
+import { brandResolved } from './shared/calc.js';
 
 const NAV = [
   { group: 'Operasyon', items: [
@@ -111,8 +113,9 @@ async function unmatchedBadge() {
     const { names } = await api.get('labelnames');
     let n = 0;
     for (const v of Object.values(names)) {
+      if (isArchiveOnly(v)) continue;
       const m = state.ctx.match(v.raw);
-      if (!m.productId && !m.ignored && !m.parts) n++;
+      if (!m.productId && !m.ignored && !m.parts && !brandResolved(m, state.ctx)) n++;
     }
     setBadge('matching', n);
   } catch { /* yok */ }

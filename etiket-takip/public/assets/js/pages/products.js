@@ -1,8 +1,9 @@
 // Ürün kataloğu + üretim listesi sırası + eşleştirme kuralları.
-import { html, mount, icon, modal, confirmDialog, toast, uid, n, esc, emptyState, sortable, collator, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
+import { html, mount, icon, modal, confirmDialog, toast, uid, n, esc, emptyState, sortable, collator, selTh, selTd, bulkBar, wireBulk, multiSelect } from '../core/ui.js';
 import { api, state, isAdmin, saveSection } from '../core/api.js';
 import { createMatcher, autoKeywords } from '../shared/matcher.js';
 import { parseProductList, planCatalogReplace } from '../core/catalog.js';
+import { brandRules } from '../shared/calc.js';
 
 let labelNames = null;
 const has = (res, id) => res.productId === id || (res.parts || []).some((x) => x.productId === id);
@@ -14,9 +15,10 @@ async function getLabelNames() {
 /** Ürün düzenleme penceresi — kural değişikliğinin etkisini canlı gösterir */
 export async function productForm(product, { presetName } = {}) {
   const isNew = !product;
-  const p = product || { id: uid('p'), name: presetName || '', sku: '', category: '', unit: 'adet', keywords: '', exclude: '', packMultiplier: false, active: true };
+  const p = product || { id: uid('p'), name: presetName || '', sku: '', brand: '', category: '', unit: 'adet', keywords: '', exclude: '', packMultiplier: false, active: true };
   const names = await getLabelNames().catch(() => []);
   const cats = [...new Set(state.config.products.map((x) => x.category).filter(Boolean))].sort(collator.compare);
+  const brands = brandList();
   const noise = state.config.settings.noiseWords;
 
   const res = await modal({
@@ -25,8 +27,9 @@ export async function productForm(product, { presetName } = {}) {
     body: html`<div class="grid g-2" style="align-items:start">
       <div class="form" style="grid-template-columns:1fr 1fr">
         <label class="f full">Ürün adı <span class="hint">Üretim listesinde ve Excel'de görünen ad</span><input class="input" name="name" value="${p.name}" maxlength="120" placeholder="Örn. Detox Shot"></label>
+        <label class="f">Marka<input class="input" name="brand" value="${p.brand || ''}" list="brandList" maxlength="60" placeholder="Momordica, Ultra Natura…"><datalist id="brandList">${brands.map((c) => html`<option value="${c}">`)}</datalist></label>
         <label class="f">Kategori<input class="input" name="category" value="${p.category}" list="catList" maxlength="60" placeholder="Shot, Sirke, Toz…"><datalist id="catList">${cats.map((c) => html`<option value="${c}">`)}</datalist></label>
-        <label class="f">Stok kodu (SKU)<input class="input" name="sku" value="${p.sku}" maxlength="60"></label>
+        <label class="f full">Stok kodu (SKU)<input class="input" name="sku" value="${p.sku}" maxlength="60"></label>
         <label class="f full">Eşleşme kelimeleri <span class="hint">Boş bırakırsanız ürün adından otomatik üretilir. Tüm kelimeler etiket adında geçmeli. <b>/</b> = veya, her satır ayrı bir kural.</span>
           <textarea class="input" name="keywords" rows="3" placeholder="${autoKeywords(p.name || 'detox shot', noise)}">${p.keywords}</textarea></label>
         <label class="f full">Hariç kelimeler <span class="hint">Bu kelimelerden biri geçerse bu ürünle eşleşmez (boşlukla ayırın)</span><input class="input" name="exclude" value="${p.exclude}" placeholder="örn. mix set"></label>
@@ -49,7 +52,7 @@ export async function productForm(product, { presetName } = {}) {
     onOpen: (d) => {
       const read = () => {
         const f = (k) => d.querySelector(`[name=${k}]`);
-        return { ...p, name: f('name').value.trim(), category: f('category').value.trim(), sku: f('sku').value.trim(), keywords: f('keywords').value.trim(), exclude: f('exclude').value.trim(), packMultiplier: f('packMultiplier').checked, active: f('active').checked };
+        return { ...p, name: f('name').value.trim(), category: f('category').value.trim(), brand: f('brand').value.trim(), sku: f('sku').value.trim(), keywords: f('keywords').value.trim(), exclude: f('exclude').value.trim(), packMultiplier: f('packMultiplier').checked, active: f('active').checked };
       };
       const update = () => {
         const next = read();
@@ -91,10 +94,10 @@ export async function productForm(product, { presetName } = {}) {
     },
     onSubmit: async (_, d) => {
       const f = (k) => d.querySelector(`[name=${k}]`);
-      const next = { ...p, name: f('name').value.trim(), category: f('category').value.trim(), sku: f('sku').value.trim(), keywords: f('keywords').value.trim(), exclude: f('exclude').value.trim(), packMultiplier: f('packMultiplier').checked, active: f('active').checked };
+      const next = { ...p, name: f('name').value.trim(), category: f('category').value.trim(), brand: f('brand').value.trim(), sku: f('sku').value.trim(), keywords: f('keywords').value.trim(), exclude: f('exclude').value.trim(), packMultiplier: f('packMultiplier').checked, active: f('active').checked };
       if (!next.name) throw new Error('Ürün adı gerekli');
-      const dup = state.config.products.find((x) => x.id !== next.id && x.name.toLocaleLowerCase('tr-TR') === next.name.toLocaleLowerCase('tr-TR'));
-      if (dup) throw new Error('Bu adla bir ürün zaten var');
+      const dup = state.config.products.find((x) => x.id !== next.id && x.name.toLocaleLowerCase('tr-TR') === next.name.toLocaleLowerCase('tr-TR') && (x.brand || '').toLocaleLowerCase('tr-TR') === next.brand.toLocaleLowerCase('tr-TR'));
+      if (dup) throw new Error(next.brand ? 'Bu markada bu adla bir ürün zaten var' : 'Bu adla bir ürün zaten var');
       const list = isNew ? [...state.config.products, next] : state.config.products.map((x) => (x.id === next.id ? next : x));
       await saveSection('products', list, `${isNew ? 'eklendi' : 'güncellendi'}: ${next.name}`);
       toast(isNew ? 'Ürün eklendi' : 'Ürün kaydedildi', 'ok');
@@ -103,43 +106,70 @@ export async function productForm(product, { presetName } = {}) {
   return res === 'save';
 }
 
-/** Katalogu yapıştırılan listeyle değiştir: SKU | Marka | Ürün [| Kategori], bu sırayla */
+const brandList = () => [...new Set(state.config.products.map((x) => x.brand).filter(Boolean))].sort(collator.compare);
+
+/** Excel'den yapıştırılan liste: SKU | Marka | Ürün | Kategori. Kataloğu değiştirir ya da sona ekler. */
 async function pasteList() {
   let plan = null;
+  let mode = 'replace';
   const res = await modal({
     title: 'Ürün listesini yapıştır',
     size: 'lg',
     body: html`<div class="stack">
-      <p class="muted small">Excel'den <b>SKU · Marka · Ürün</b> (isteğe bağlı 4. sütun: Kategori) sütunlarını kopyalayıp yapıştırın. Katalog <b>tam olarak bu liste ve bu sıra</b> olur. Mevcut ürünler önce addan, sonra SKU'dan eşleştirilir; eşleşenlerin kampanya, eşleştirme ve geçmiş kayıtları korunur. Aynı satır iki kez varsa bir kez alınır.</p>
-      <textarea class="input" id="plist" rows="10" placeholder="IC-CCN-250ML&#9;Momordica&#9;Coconut Mix&#10;IC-DTX-250ML&#9;Momordica&#9;DetoxMix"></textarea>
+      <p class="muted small">Excel'de <b>SKU · Marka · Ürün · Kategori</b> sütunlarını seçip kopyalayın ve aşağıya yapıştırın (Kategori isteğe bağlı; başlık satırı varsa sütun sırası fark etmez). Ürünler <b>bu sırayla</b> listelenir; üretim listesi ve Excel de bu sırayı kullanır.</p>
+      <div class="seg" id="pmode" role="tablist">
+        <button type="button" class="on" data-m="replace">Kataloğu bu listeyle değiştir</button>
+        <button type="button" data-m="append">Mevcut kataloğun sonuna ekle</button>
+      </div>
+      <textarea class="input" id="plist" rows="9" placeholder="IC-CCN-250ML&#9;Momordica&#9;Coconut Mix&#9;İçecek &amp; Mix&#10;IC-DTX-250ML&#9;Momordica&#9;DetoxMix&#9;İçecek &amp; Mix"></textarea>
       <div id="pprev"></div>
     </div>`,
-    actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Kataloğu bu listeyle değiştir', value: 'save', variant: 'primary' }],
+    actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Kaydet', value: 'save', variant: 'primary' }],
     onOpen: (d) => {
       const ta = d.querySelector('#plist');
+      const saveBtn = d.querySelector('.modal-f button[value=save]');
       let t;
       const draw = () => {
         const rows = parseProductList(ta.value);
-        if (!rows.length) { plan = null; return mount(d.querySelector('#pprev'), ''); }
-        plan = planCatalogReplace(state.config.products, rows, state.config.settings.noiseWords);
+        if (!rows.length) { plan = null; if (saveBtn) saveBtn.textContent = 'Kaydet'; return mount(d.querySelector('#pprev'), ''); }
+        plan = planCatalogReplace(state.config.products, rows, state.config.settings.noiseWords, { mode });
+        if (saveBtn) saveBtn.textContent = mode === 'append' ? `${plan.added.length} ürünü ekle` : `Kataloğu ${plan.products.length} ürünle değiştir`;
         const renamed = plan.kept.filter((k) => k.old.name !== k.row.name);
-        mount(d.querySelector('#pprev'), html`<div class="kpis">
-            <div class="kpi"><div class="l">Listedeki ürün</div><div class="v">${plan.products.length}</div></div>
-            <div class="kpi"><div class="l">Mevcut ürünle eşleşen</div><div class="v">${plan.kept.length}</div><div class="s">${renamed.length} tanesinin adı güncellenecek</div></div>
+        const noBrand = rows.filter((r) => !r.brand).length;
+        mount(d.querySelector('#pprev'), html`
+          <div class="callout ${rows.repeats.length ? 'warn' : 'ok'}">${icon(rows.repeats.length ? 'alert' : 'check')}<div class="c">
+            <b>${n(rows.lines)} satır yapıştırdınız → ${n(rows.length)} farklı ürün.</b>
+            ${rows.repeats.length ? html`<br>${rows.repeats.length} satır listede ikinci kez geçiyor, bir kez alındı:
+              <div class="small" style="margin-top:4px">${rows.repeats.map((r) => html`<div>${r.line}. satır = ${r.first}. satır · <b>${r.name}</b>${r.brand ? html` <span class="muted">(${r.brand})</span>` : ''}</div>`)}</div>` : ''}
+            ${noBrand ? html`<br><span class="muted">${noBrand} satırda marka yok.</span>` : ''}
+          </div></div>
+          <div class="kpis" style="margin-top:10px">
+            <div class="kpi"><div class="l">${mode === 'append' ? 'Kaydedince katalog' : 'Yeni katalog'}</div><div class="v">${plan.products.length}</div><div class="s">ürün</div></div>
+            <div class="kpi"><div class="l">Zaten var (korunur)</div><div class="v">${plan.kept.length}</div><div class="s">${renamed.length ? `${renamed.length} tanesinin adı güncellenir` : 'geçmişi ve kampanyaları korunur'}</div></div>
             <div class="kpi"><div class="l">Yeni eklenecek</div><div class="v">${plan.added.length}</div></div>
-            <div class="kpi"><div class="l">Katalogdan çıkacak</div><div class="v">${plan.removed.length + plan.merged}</div><div class="s">${plan.merged} tanesi listedeki ürünle birleşir</div></div>
+            ${mode === 'replace' ? html`<div class="kpi"><div class="l">Katalogdan çıkacak</div><div class="v">${plan.removed.length + plan.merged}</div><div class="s">${plan.merged ? `${plan.merged} tanesi listedeki aynı ürünle birleşir` : 'listede olmayanlar'}</div></div>` : ''}
           </div>
-          ${plan.duplicates.length ? html`<div class="callout info" style="margin-top:10px">${icon('info')}<div class="c"><b>Aynı adlı ürünler:</b> ${plan.duplicates.join(', ')} — etiket hangi mağazadan geliyorsa o mağazanın markasındaki ürün seçilir.</div></div>` : ''}
-          ${plan.removed.length ? html`<div class="callout warn" style="margin-top:10px">${icon('alert')}<div class="c"><b>Listede olmadığı için silinecek:</b> ${plan.removed.map((p) => p.name).join(' · ')}</div></div>` : ''}
-          ${renamed.length ? html`<details style="margin-top:10px"><summary class="small" style="cursor:pointer">Adı güncellenecek ${renamed.length} ürün (etiketlerdeki eski adla da eşleşmeye devam eder)</summary>
+          ${plan.removed.length ? html`<div class="callout warn" style="margin-top:10px">${icon('alert')}<div class="c"><b>Listede olmadığı için silinecek ${plan.removed.length} ürün:</b> ${plan.removed.map((p) => p.name).join(' · ')}</div></div>` : ''}
+          ${plan.merged ? html`<details style="margin-top:10px"><summary class="small" style="cursor:pointer">Listedeki ürünle birleşecek ${plan.merged} eski kayıt (etiketleri ve kampanyaları listedeki ürüne geçer)</summary>
+            <div class="small" style="margin-top:6px;max-height:200px;overflow:auto">${Object.entries(plan.remap).map(([o, nw]) => html`<div><span class="muted">${(state.config.products.find((p) => p.id === o) || {}).name}</span> → <b>${(plan.products.find((p) => p.id === nw) || {}).name}</b></div>`)}</div></details>` : ''}
+          ${renamed.length ? html`<details style="margin-top:6px"><summary class="small" style="cursor:pointer">Adı güncellenecek ${renamed.length} ürün (etiketlerdeki eski adla da eşleşmeye devam eder)</summary>
             <div class="small" style="margin-top:6px;max-height:200px;overflow:auto">${renamed.map((k) => html`<div><span class="muted">${k.old.name}</span> → <b>${k.row.name}</b></div>`)}</div></details>` : ''}
-          ${plan.added.length ? html`<details style="margin-top:6px"><summary class="small" style="cursor:pointer">Yeni eklenecek ${plan.added.length} ürün</summary><div class="small" style="margin-top:6px">${plan.added.map((r) => r.name).join(' · ')}</div></details>` : ''}`);
+          ${plan.added.length ? html`<details style="margin-top:6px"><summary class="small" style="cursor:pointer">Yeni eklenecek ${plan.added.length} ürün</summary><div class="small" style="margin-top:6px">${plan.added.map((r) => r.name).join(' · ')}</div></details>` : ''}
+          ${plan.duplicates.length ? html`<div class="callout info" style="margin-top:10px">${icon('info')}<div class="c"><b>Farklı markalarda aynı adlı ürünler:</b> ${plan.duplicates.join(', ')}. Etiket hangi mağazadan geldiyse o mağazada satılan markanın ürünü sayılır (bkz. <b>Markalar</b>).</div></div>` : ''}`);
       };
       ta.addEventListener('input', () => { clearTimeout(t); t = setTimeout(draw, 200); });
+      d.querySelector('#pmode').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-m]');
+        if (!b) return;
+        mode = b.dataset.m;
+        d.querySelectorAll('#pmode [data-m]').forEach((x) => x.classList.toggle('on', x === b));
+        draw();
+      });
       ta.focus();
     },
     onSubmit: async () => {
       if (!plan || !plan.products.length) throw new Error('Önce listeyi yapıştırın');
+      if (plan.mode === 'append' && !plan.added.length && !plan.kept.length) throw new Error('Eklenecek ürün yok');
       // Silinen/birleşen ürünlere bağlı kampanya ve eşleştirmeleri yeni kimliklere taşı
       const remap = plan.remap;
       const alive = new Set(plan.products.map((p) => p.id));
@@ -155,7 +185,9 @@ async function pasteList() {
         rewardProductId: c.rewardProductId ? mapId(c.rewardProductId) : '',
         rewards: (c.rewards || []).map((r) => ({ ...r, productId: r.productId ? mapId(r.productId) : '' })),
       }));
-      await saveSection('products', plan.products, `ürün listesi yapıştırıldı: ${plan.products.length} ürün (${plan.added.length} yeni, ${plan.removed.length + plan.merged} çıkarıldı)`);
+      await saveSection('products', plan.products, plan.mode === 'append'
+        ? `ürün listesi eklendi: ${plan.added.length} yeni, ${plan.kept.length} güncellendi`
+        : `ürün listesi yapıştırıldı: ${plan.products.length} ürün (${plan.added.length} yeni, ${plan.removed.length + plan.merged} çıkarıldı)`);
       if (Object.keys(remap).length) {
         await saveSection('aliases', aliases, 'ürün listesi değişikliği: eşleştirmeler taşındı');
         await saveSection('campaigns', campaigns, 'ürün listesi değişikliği: kampanya ürünleri taşındı');
@@ -166,24 +198,31 @@ async function pasteList() {
   return res === 'save';
 }
 
-async function bulkAdd() {
+/** Markalar: ürün sayısı ve (isteğe bağlı) yalnızca satıldığı mağazalar */
+async function brandsDialog() {
+  const rules = { ...brandRules(state.config) };
+  const brands = brandList();
+  const stores = state.config.stores || [];
   const res = await modal({
-    title: 'Toplu ürün ekle',
-    body: html`<p class="muted small" style="margin-bottom:10px">Her satıra bir ürün yazın. İsterseniz kategoriyi <b>|</b> ile ekleyin. Ürünler bu sırayla listenin sonuna eklenir.</p>
-      <textarea class="input" name="bulk" rows="12" placeholder="Detox Shot | Shot&#10;Detox Mix | Toz&#10;Zencefil Shot | Shot&#10;Sultan Sirkesi 500ml | Sirke"></textarea>`,
-    actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Ekle', value: 'save', variant: 'primary' }],
-    onSubmit: async (_, d) => {
-      const have = new Set(state.config.products.map((p) => p.name.toLocaleLowerCase('tr-TR')));
-      const add = [];
-      for (const line of d.querySelector('[name=bulk]').value.split('\n')) {
-        const [name, category = ''] = line.split('|').map((x) => x.trim());
-        if (!name || have.has(name.toLocaleLowerCase('tr-TR'))) continue;
-        have.add(name.toLocaleLowerCase('tr-TR'));
-        add.push({ id: uid('p'), name, category, sku: '', unit: 'adet', keywords: '', exclude: '', packMultiplier: false, active: true });
-      }
-      if (!add.length) throw new Error('Eklenecek yeni ürün yok');
-      await saveSection('products', [...state.config.products, ...add], `${add.length} ürün toplu eklendi`);
-      toast(`${add.length} ürün eklendi`, 'ok');
+    title: 'Markalar',
+    size: 'lg',
+    body: html`<div class="stack">
+      <p class="muted small">Bir marka yalnızca belirli mağazalarda satılıyorsa o mağazaları seçin. O markanın ürünleri diğer mağazaların etiketlerinde <b>hiç aday olmaz</b>; böylece farklı markalardaki aynı adlı ürünler (ör. iki “Karamürver ve Karadut Özü”) karışmaz. Boş bırakılan marka tüm mağazalarda sayılır.</p>
+      ${brands.length ? html`<div class="tw"><table class="t"><thead><tr><th>Marka</th><th class="num">Ürün</th><th>Yalnızca şu mağazalarda satılır</th></tr></thead><tbody>
+        ${brands.map((b) => html`<tr><td><b>${b}</b></td><td class="num">${state.config.products.filter((p) => p.brand === b).length}</td><td><div data-brand="${b}"></div></td></tr>`)}
+      </tbody></table></div>` : emptyState('box', 'Henüz marka yok', 'Ürünlere marka girin ya da “Listeyi yapıştır” ile SKU · Marka · Ürün listesini yapıştırın.')}
+    </div>`,
+    actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Kaydet', value: 'save', variant: 'primary' }],
+    onOpen: (d) => {
+      d.querySelectorAll('[data-brand]').forEach((el) => {
+        const b = el.dataset.brand;
+        multiSelect(el, { options: stores.map((s) => ({ id: s.id, label: s.name, color: s.color })), selected: rules[b] || [], allLabel: 'Tüm mağazalar', onChange: (v) => { rules[b] = v; } });
+      });
+    },
+    onSubmit: async () => {
+      const clean = Object.fromEntries(brands.map((b) => [b, rules[b] || []]));
+      await saveSection('settings', { ...state.config.settings, brandStores: clean }, 'marka → mağaza kuralları');
+      toast('Markalar kaydedildi', 'ok');
     },
   });
   return res === 'save';
@@ -192,15 +231,16 @@ async function bulkAdd() {
 export default async function productsPage(ctx) {
   const admin = isAdmin();
   if (admin) {
-    mount(ctx.actions, html`<button class="btn" id="paste">${icon('sheet')}Listeyi yapıştır</button><button class="btn" id="bulk">${icon('copy')}Toplu ekle</button><button class="btn primary" id="add">${icon('plus')}Ürün ekle</button>`);
+    mount(ctx.actions, html`<button class="btn" id="brands">${icon('tag')}Markalar</button><button class="btn" id="paste">${icon('sheet')}Listeyi yapıştır</button><button class="btn primary" id="add">${icon('plus')}Ürün ekle</button>`);
     ctx.actions.querySelector('#paste').addEventListener('click', async () => { if (await pasteList()) render(); });
     ctx.actions.querySelector('#add').addEventListener('click', async () => { if (await productForm()) render(); });
-    ctx.actions.querySelector('#bulk').addEventListener('click', async () => { if (await bulkAdd()) render(); });
+    ctx.actions.querySelector('#brands').addEventListener('click', async () => { if (await brandsDialog()) render(); });
   }
   labelNames = null;
   const names = await getLabelNames().catch(() => []);
   let q = '';
   let cat = '';
+  let brand = '';
   const sel = new Set();
 
   function render() {
@@ -211,37 +251,42 @@ export default async function productsPage(ctx) {
       for (const id of m.parts ? m.parts.map((x) => x.productId) : m.productId ? [m.productId] : []) counts.set(id, (counts.get(id) || 0) + 1);
     }
     const cats = [...new Set(all.map((p) => p.category).filter(Boolean))].sort(collator.compare);
+    const brands = brandList();
+    const rules = brandRules(state.config);
+    const storeName = (id) => (state.config.stores.find((s) => s.id === id) || {}).name || '?';
     const ql = q.toLocaleLowerCase('tr-TR');
-    const filtered = all.filter((p) => (!cat || p.category === cat) && (!ql || [p.name, p.sku, p.category, p.keywords].join(' ').toLocaleLowerCase('tr-TR').includes(ql)));
-    const canDrag = admin && !q && !cat;
+    const filtered = all.filter((p) => (!cat || p.category === cat) && (!brand || (brand === '-' ? !p.brand : p.brand === brand)) && (!ql || [p.name, p.sku, p.brand, p.category, p.keywords].join(' ').toLocaleLowerCase('tr-TR').includes(ql)));
+    const canDrag = admin && !q && !cat && !brand;
     ctx.setSub(`${all.length} ürün · ${all.filter((p) => p.active !== false).length} aktif`);
     mount(ctx.el, html`<div class="stack">
       <div class="callout info">${icon('info')}<div class="c"><b>Bu liste = üretim listesi sırası</b>Excel'deki “Ürün | Gönderilecek Adet” tablosu buradaki sırayla oluşur. ${admin ? 'Satırları tutamaçtan sürükleyin veya sıra numarasını değiştirin; sıra anında kaydedilir.' : ''}</div></div>
       <div class="card" id="pCard">
         <div class="card-h">
           <div class="search" style="width:280px;max-width:100%">${icon('search')}<input class="input sm" id="q" placeholder="Ürün, SKU, kelime ara…" value="${q}"></div>
+          <select class="input sm" id="brand" style="width:auto"><option value="">Tüm markalar</option>${brands.map((b) => html`<option value="${b}" ${b === brand ? 'selected' : ''}>${b}</option>`)}${all.some((p) => !p.brand) ? html`<option value="-" ${brand === '-' ? 'selected' : ''}>(Markasız)</option>` : ''}</select>
           <select class="input sm" id="cat" style="width:auto"><option value="">Tüm kategoriler</option>${cats.map((c) => html`<option ${c === cat ? 'selected' : ''}>${c}</option>`)}</select>
           <span class="spacer"></span>${!canDrag && admin ? html`<span class="muted xs">Sıralamak için aramayı/filtreyi temizleyin</span>` : ''}
         </div>
-        <div class="tw"><table class="t"><thead><tr>${admin ? selTh() : ''}${canDrag ? html`<th></th>` : ''}<th>Sıra</th><th>Ürün</th><th>Kategori</th><th>Eşleşme kuralı</th><th class="num">Etiket adı</th><th>Durum</th><th></th></tr></thead>
+        <div class="tw"><table class="t"><thead><tr>${admin ? selTh() : ''}${canDrag ? html`<th></th>` : ''}<th>Sıra</th><th>Ürün</th><th>Marka</th><th class="hide-m">Kategori</th><th class="num hide-m" title="Bu ürüne eşleşen farklı etiket adı sayısı">Etiket adı</th><th>Durum</th><th></th></tr></thead>
         <tbody id="rows">${filtered.length ? filtered.map((p) => {
           const pos = all.indexOf(p) + 1;
           return html`<tr data-id="${p.id}">
             ${admin ? selTd(p.id, sel) : ''}
             ${canDrag ? html`<td class="grip" title="Sürükle">${icon('grip')}</td>` : ''}
             <td class="pos">${canDrag ? html`<input class="input sm" type="number" min="1" max="${all.length}" value="${pos}" data-pos="${p.id}">` : html`<span class="muted">${pos}</span>`}</td>
-            <td><b>${p.name}</b>${p.sku || p.brand ? html`<div class="muted xs">${[p.brand, p.sku].filter(Boolean).join(' · ')}</div>` : ''}</td>
-            <td>${p.category ? html`<span class="badge">${p.category}</span>` : html`<span class="muted">—</span>`}</td>
-            <td class="small">${p.keywords ? html`<code>${p.keywords.replace(/\n/g, ' ‖ ')}</code>` : html`<span class="muted">otomatik: ${autoKeywords(p.name, state.config.settings.noiseWords)}</span>`}${p.exclude ? html`<div class="xs unm">hariç: ${p.exclude}</div>` : ''}${p.packMultiplier ? html` <span class="badge info">×paket</span>` : ''}</td>
-            <td class="num">${n(counts.get(p.id) || 0)}</td>
+            <td><b>${p.name}</b>${p.sku ? html`<div class="muted xs">${p.sku}</div>` : ''}</td>
+            <td class="small">${p.brand ? html`${p.brand}${(rules[p.brand] || []).length ? html`<div class="muted xs" title="Bu marka yalnızca bu mağazalarda sayılır">yalnız: ${rules[p.brand].map(storeName).join(', ')}</div>` : ''}` : html`<span class="muted">—</span>`}</td>
+            <td class="hide-m">${p.category ? html`<span class="badge">${p.category}</span>` : html`<span class="muted">—</span>`}</td>
+            <td class="num hide-m">${counts.get(p.id) ? n(counts.get(p.id)) : html`<span class="muted" title="Henüz bu ürüne eşleşen etiket yok">0</span>`}${p.packMultiplier ? html` <span class="badge info">×paket</span>` : ''}</td>
             <td>${p.active !== false ? html`<span class="badge ok"><span class="dot"></span>Aktif</span>` : html`<span class="badge">Pasif</span>`}</td>
             <td class="num nowrap">${admin ? html`<button class="btn sm ghost icon" data-edit="${p.id}" title="Düzenle">${icon('edit')}</button><button class="btn sm ghost icon danger" data-del="${p.id}" title="Sil">${icon('trash')}</button>` : ''}</td>
           </tr>`;
-        }) : html`<tr><td colspan="9">${emptyState('box', all.length ? 'Sonuç yok' : 'Katalog boş', admin && !all.length ? html`“Ürün ekle” veya “Toplu ekle” ile ürünlerinizi <b>üretim listesinde görmek istediğiniz sırayla</b> girin.` : '')}</td></tr>`}</tbody></table></div>
+        }) : html`<tr><td colspan="9">${emptyState('box', all.length ? 'Sonuç yok' : 'Katalog boş', admin && !all.length ? html`Excel'deki ürün listenizi (SKU · Marka · Ürün · Kategori) <b>“Listeyi yapıştır”</b> ile tek seferde ekleyin.` : '')}</td></tr>`}</tbody></table></div>
         ${admin ? bulkBar() : ''}
       </div>
     </div>`);
     if (admin) wireBulk(ctx.el.querySelector('#pCard'), sel, [
+      { id: 'brand', label: 'Marka ata' },
       { id: 'cat', label: 'Kategori ata' },
       { id: 'on', label: 'Aktif yap' },
       { id: 'off', label: 'Pasif yap' },
@@ -250,6 +295,7 @@ export default async function productsPage(ctx) {
     const qi = ctx.el.querySelector('#q');
     qi.addEventListener('input', () => { q = qi.value; const pos = qi.selectionStart; render(); const n2 = ctx.el.querySelector('#q'); n2.focus(); n2.setSelectionRange(pos, pos); });
     ctx.el.querySelector('#cat').addEventListener('change', (e) => { cat = e.target.value; render(); });
+    ctx.el.querySelector('#brand').addEventListener('change', (e) => { brand = e.target.value; render(); });
     if (canDrag) sortable(ctx.el.querySelector('#rows'), (ids) => saveOrder(ids));
   }
 
@@ -264,17 +310,19 @@ export default async function productsPage(ctx) {
       await saveSection('products', list.filter((p) => !set.has(p.id)), `${ids.length} ürün toplu silindi`);
     } else if (a === 'on' || a === 'off') {
       await saveSection('products', list.map((p) => (set.has(p.id) ? { ...p, active: a === 'on' } : p)), `${ids.length} ürün ${a === 'on' ? 'aktif' : 'pasif'} yapıldı`);
-    } else if (a === 'cat') {
-      let catName = null;
-      const cats = [...new Set(list.map((p) => p.category).filter(Boolean))];
+    } else if (a === 'cat' || a === 'brand') {
+      const field = a === 'cat' ? 'category' : 'brand';
+      const label = a === 'cat' ? 'Kategori' : 'Marka';
+      let val = null;
+      const opts = [...new Set(list.map((p) => p[field]).filter(Boolean))];
       const ok = await modal({
-        title: `${ids.length} ürüne kategori ata`, size: 'sm',
-        body: html`<label class="f">Kategori<input class="input" name="c" list="bulkCats" placeholder="Boş = kategoriyi kaldır"><datalist id="bulkCats">${cats.map((c) => html`<option value="${c}">`)}</datalist></label>`,
+        title: `${ids.length} ürüne ${label.toLocaleLowerCase('tr-TR')} ata`, size: 'sm',
+        body: html`<label class="f">${label}<input class="input" name="c" list="bulkOpts" placeholder="Boş = kaldır"><datalist id="bulkOpts">${opts.map((c) => html`<option value="${c}">`)}</datalist></label>`,
         actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Uygula', value: 'ok', variant: 'primary' }],
-        onSubmit: (_, d) => { catName = d.querySelector('[name=c]').value.trim(); },
+        onSubmit: (_, d) => { val = d.querySelector('[name=c]').value.trim(); },
       });
       if (ok !== 'ok') return false;
-      await saveSection('products', list.map((p) => (set.has(p.id) ? { ...p, category: catName } : p)), `${ids.length} ürüne kategori: ${catName || '(yok)'}`);
+      await saveSection('products', list.map((p) => (set.has(p.id) ? { ...p, [field]: val } : p)), `${ids.length} ürüne ${label.toLocaleLowerCase('tr-TR')}: ${val || '(yok)'}`);
     }
     toast('Güncellendi', 'ok');
     render();

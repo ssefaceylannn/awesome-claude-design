@@ -98,6 +98,33 @@ await test('Yapıştırılan ürün listesi: SKU ile eşleştir, sıra, tekrar, 
   assert.equal(plan.products.find((p) => p.brand === 'Ultra Natura').id, [...un.products.keys()][0]);
 });
 
+await test('Liste: başlık satırı, 4 sütun, tekrar raporu, sona ekleme; marka yalnızca kendi mağazasında', async () => {
+  const { parseProductList, planCatalogReplace } = await import('../public/assets/js/core/catalog.js');
+  const rows = parseProductList('Ürün Adı\tMarka\tSKU\tKategori\nCoconut Mix\tMomordica\tIC-CCN-250ML\tİçecek & Mix\nFit 365\tPower Vital\tTAK-FIT-365\t\nCoconut Mix\tMomordica\tIC-CCN-250ML\tİçecek & Mix\n');
+  assert.equal(rows.header, true);
+  assert.equal(rows.lines, 3);
+  assert.deepEqual(rows[0], { sku: 'IC-CCN-250ML', brand: 'Momordica', name: 'Coconut Mix', category: 'İçecek & Mix' });
+  assert.deepEqual(rows.repeats.map((r) => [r.line, r.first]), [[3, 1]]);
+  const r4 = parseProductList('IC-CCN-250ML\tMomordica\tCoconut Mix\tİçecek & Mix');
+  assert.equal(r4[0].category, 'İçecek & Mix');
+  // Sona ekle: mevcut sıra korunur, yeni ürün sona
+  const existing = [{ id: 'z', name: 'Zencefil Shot' }, { id: 'c', name: 'Coconut Mix' }];
+  const plan = planCatalogReplace(existing, rows, undefined, { mode: 'append' });
+  assert.deepEqual(plan.products.map((p) => p.name), ['Zencefil Shot', 'Coconut Mix', 'Fit 365']);
+  assert.equal(plan.products[1].brand, 'Momordica');
+  assert.equal(plan.removed.length, 0);
+  // Power Vital yalnızca Power Vital İkas'ta sayılır (varsayılan kural)
+  const ps = [{ id: 'un', name: 'Karamürver ve Karadut Özü', brand: 'Ultra Natura' }, { id: 'pv', name: 'Karamürver ve Karadut Özü', brand: 'Power Vital' }, { id: 'fit', name: 'Fit 365', brand: 'Power Vital' }];
+  const stores = [{ id: 'spv', name: 'Power Vital İkas', platform: 'ikas', senders: [] }, { id: 'sun', name: 'Ultra Natura Trendyol', platform: 'trendyol', senders: [] }, { id: 'sdo', name: 'Daily Organics Trendyol', platform: 'trendyol', senders: [] }];
+  const run = (settings, sender, name) => [...aggregate([{ k: 'a', date: '2026-09-24', sender, items: [{ name, qty: 1 }] }], createContext({ products: ps, stores, campaigns: [], aliases: {}, settings })).products.keys()];
+  assert.deepEqual(run({}, 'Daily Organics Trendyol', 'Karamürver ve Karadut Özü 680 gr'), ['un']);
+  assert.deepEqual(run({}, 'Ultra Natura Trendyol', 'Karamürver ve Karadut Özü'), ['un']);
+  assert.deepEqual(run({}, 'Power Vital İkas', 'Karamürver ve Karadut Özü'), ['pv']);
+  assert.deepEqual(run({}, 'Daily Organics Trendyol', 'Fit 365'), []); // PV ürünü başka mağazada eşleşmez
+  // Kaydedilmiş kural varsayılanın yerine geçer (boş = tüm mağazalar)
+  assert.deepEqual(run({ brandStores: { 'Power Vital': [] } }, 'Daily Organics Trendyol', 'Fit 365'), ['fit']);
+});
+
 await test('Gramaj/hacim farkı ayrı ürün sayılır', () => {
   const m = createMatcher({ products });
   assert.equal(m('Sultan Sirkesi - 500ml').productId, 's500');
@@ -211,6 +238,29 @@ await test('Katına tamamla: 1→2, 2→2, 3→4, 4→4', () => {
     campaigns: [{ id: 'c', name: 'Çifte tamamla', active: true, platforms: [], storeIds: [], triggerProductIds: ['a'], condition: 'qty', countMode: 'each', mode: 'roundup', minQty: 2, rewards: [{ productId: '', qty: 1 }] }] });
   const total = (q) => aggregate([{ k: 'x', date: '2026-09-24', sender: 'X', items: [{ name: 'Coconut Mix', qty: q }] }], ctx).totalUnits;
   assert.deepEqual([1, 2, 3, 4, 5].map(total), [2, 2, 4, 4, 6]);
+});
+
+await test('Etiket: adet hücrede üste / ortaya / alta hizalı, uzun ad alt satıra kayar', async () => {
+  const { parsePage } = await import('../public/assets/js/shared/parser.js');
+  const H = 283;
+  const t = (str, x, y, size = 10) => ({ str, transform: [size, 0, 0, size, x, H - y] });
+  const head = [t('trendyol', 11, 25, 12), t('7340037392099880', 172, 35, 7), t('Gönderici', 16, 50, 7), t('Momordica İkas', 67, 50, 7),
+    t('Alıcı', 16, 69, 7), t('Ayşe Yılmaz', 67, 69), t('Adres', 16, 87, 7), t('Merkez, Elazığ', 67, 87), t('PTT KARGO', 16, 165, 9), t('2755050147526', 109, 185, 9)];
+  const page = (items) => parsePage([...head, ...items], H).items;
+  // Alta hizalı: adet, adın son satırıyla aynı hizada (eski sürüm iki ürünü birleştiriyordu)
+  assert.deepEqual(page([t('1x', 19, 200, 12), t('DetoxMix', 45, 200), t('Daily Shake Ara Öğün Tozu - 200 gr (Kakao', 45, 211), t('Aromalı)', 45, 222), t('2x', 19, 222, 12)]),
+    [{ qty: 1, name: 'DetoxMix' }, { qty: 2, name: 'Daily Shake Ara Öğün Tozu - 200 gr (Kakao Aromalı)' }]);
+  // Ortalanmış
+  assert.deepEqual(page([t('1x', 19, 200, 12), t('DetoxMix', 45, 200), t('Daily Shake Ara Öğün Tozu - 200 gr (Kakao', 45, 211), t('1x', 19, 216.5, 12), t('Aromalı)', 45, 222)]),
+    [{ qty: 1, name: 'DetoxMix' }, { qty: 1, name: 'Daily Shake Ara Öğün Tozu - 200 gr (Kakao Aromalı)' }]);
+  assert.deepEqual(page([t('1x', 19, 209.5, 12), t('Daily Shake', 45, 209.5), t('Ginger Shot', 45, 225.5), t('1x', 19, 231.5, 12)]),
+    [{ qty: 1, name: 'Daily Shake' }, { qty: 1, name: 'Ginger Shot' }]);
+  // Üste hizalı, alt satıra kayan ad
+  assert.deepEqual(page([t('1x', 19, 200, 12), t('Daily Shake Ara Öğün Tozu - 200 gr (Kakao', 45, 200), t('Aromalı)', 45, 211), t('3x', 19, 222, 12), t('DetoxMix', 45, 222)]),
+    [{ qty: 1, name: 'Daily Shake Ara Öğün Tozu - 200 gr (Kakao Aromalı)' }, { qty: 3, name: 'DetoxMix' }]);
+  // Ortalanmış, üç ürün, ortadaki iki satır
+  assert.deepEqual(page([t('2x', 19, 200, 12), t('Coconut Mix', 45, 200), t('Momordica Daily Shake', 45, 211), t('1x', 19, 216.5, 12), t('Ananaslı 250 gr', 45, 222), t('1x', 19, 233, 12), t('Ginger Shot', 45, 233)]),
+    [{ qty: 2, name: 'Coconut Mix' }, { qty: 1, name: 'Momordica Daily Shake Ananaslı 250 gr' }, { qty: 1, name: 'Ginger Shot' }]);
 });
 
 await test('Excel ürün hücresi ayrıştırma', async () => {

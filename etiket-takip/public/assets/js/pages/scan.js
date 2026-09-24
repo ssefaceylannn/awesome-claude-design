@@ -20,7 +20,7 @@ function beep(ok) {
 export default async function scanPage(ctx) {
   let day = getRange().to;
   let orders = [];
-  const pname = (id) => (state.ctx.productsById.get(id) || {}).name || '?';
+  const pname = (id) => state.ctx.label(id);
 
   mount(ctx.el, html`<div class="stack">
     <div class="card"><div class="card-b stack">

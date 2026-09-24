@@ -11,6 +11,7 @@ const ST = {
   new: html`<span class="badge ok">Yeni</span>`,
   dup: html`<span class="badge warn">Mükerrer</span>`,
   merge: html`<span class="badge info">Devam etiketi</span>`,
+  fix: html`<span class="badge violet">Düzeltilecek</span>`,
   error: html`<span class="badge err">Hata</span>`,
 };
 
@@ -127,14 +128,14 @@ export default async function uploadPage(ctx) {
     }
     const dates = [...new Set(newRows.map((x) => x.o.date))].sort();
     const list = rows.filter((x) => statusFilter === 'all' || x.r.status === statusFilter);
-    const pname = (id) => (state.ctx.productsById.get(id) || {}).name;
-    const canSave = newRows.length || count('merge');
+    const pname = (id) => state.ctx.label(id);
+    const canSave = newRows.length || count('merge') || count('fix');
 
     mount(el, html`<div class="card">
       <div class="card-h"><h2>Önizleme</h2><span class="sub">${read.files.length} dosya · ${read.pages ? `${read.pages} etiket sayfası · ` : ''}${read.rows ? `${read.rows} Excel satırı · ` : ''}${dates.length ? rangeLabel(dates[0], dates[dates.length - 1]) : ''}</span>
         <span class="spacer"></span>
         <button class="btn" id="cancel">Vazgeç</button>
-        <button class="btn primary" id="save" ${canSave && state.me.role !== 'izleyici' ? '' : 'disabled'}>${icon('check')}Kaydet · ${n(newRows.length)} yeni sipariş</button></div>
+        <button class="btn primary" id="save" ${canSave && state.me.role !== 'izleyici' ? '' : 'disabled'}>${icon('check')}Kaydet · ${n(newRows.length)} yeni sipariş${count('fix') ? ` · ${n(count('fix'))} düzeltme` : ''}</button></div>
       <div class="card-b stack">
         <div class="kpis">
           <div class="kpi hl"><div class="l">Yeni sipariş</div><div class="v">${n(newRows.length)}</div><div class="s">${n(units)} ürün adedi</div></div>
@@ -143,6 +144,8 @@ export default async function uploadPage(ctx) {
           <div class="kpi"><div class="l">Mükerrer (sayılmaz)</div><div class="v">${n(count('dup'))}</div><div class="s">daha önce yüklenmiş</div></div>
           <div class="kpi"><div class="l">Devam etiketi</div><div class="v">${n(count('merge') + newRows.filter((x) => x.o.pages > 1).length)}</div><div class="s">önceki etikete eklendi</div></div>
         </div>
+        ${count('fix') ? html`<div class="callout info">${icon('refresh')}<div class="c"><b>${n(count('fix'))} sipariş daha önce kaydedilmiş ama ürünleri farklı okunmuş</b>
+          Etiket okuyucu iyileştirildiği için bu siparişlerin ürün satırları yeni okumayla düzeltilecek. Siparişler yine bir kez sayılır. Önce/sonra için “Düzeltilecek” sekmesine bakın.</div></div>` : ''}
         ${unknown.size ? html`<div class="callout warn">${icon('store')}<div class="c"><b>${unknown.size} gönderici hiçbir mağazaya bağlı değil</b>
           Bu siparişler “Tanımsız” mağaza olarak kaydedilir ve mağazaya özel kampanyalar uygulanmaz. Mağazayı sonradan tanımlarsanız raporlar otomatik düzelir.
           <div class="row wrap" style="margin-top:8px">${[...unknown].map(([s, c]) => html`<span class="chip static"><b>${s}</b>&nbsp;· ${c} sipariş</span>${admin ? html`<button class="btn sm" data-addstore="${s}">${icon('plus')}Mağaza olarak ekle</button>` : ''}`)}</div></div></div>` : ''}
@@ -151,15 +154,15 @@ export default async function uploadPage(ctx) {
           <div class="row wrap" style="margin-top:8px;gap:6px">${[...unmatched].slice(0, 12).map(([nm, q]) => html`<span class="chip static">${nm} · ${q}</span>`)}${unmatched.size > 12 ? html`<span class="muted small">+${unmatched.size - 12} daha</span>` : ''}</div></div></div>` : ''}
         ${read.log.length ? html`<details><summary class="small muted" style="cursor:pointer">Okuma günlüğü (${read.log.length})</summary><div class="stack small" style="gap:4px;margin-top:8px">${read.log.map((l) => html`<div class="${l.type === 'error' || l.type === 'warn' ? 'unm' : 'muted'}">• ${l.msg}</div>`)}</div></details>` : ''}
       </div>
-      <div class="tabs">${[['all', 'Tümü', rows.length], ['new', 'Yeni', newRows.length], ['dup', 'Mükerrer', count('dup')], ['merge', 'Devam', count('merge')], ['error', 'Hatalı', count('error')]].filter(([k, , c]) => k === 'all' || c).map(([k, l, c]) => html`<button data-sf="${k}" class="${statusFilter === k ? 'on' : ''}">${l} <span class="muted">${c}</span></button>`)}</div>
+      <div class="tabs">${[['all', 'Tümü', rows.length], ['new', 'Yeni', newRows.length], ['dup', 'Mükerrer', count('dup')], ['merge', 'Devam', count('merge')], ['fix', 'Düzeltilecek', count('fix')], ['error', 'Hatalı', count('error')]].filter(([k, , c]) => k === 'all' || c).map(([k, l, c]) => html`<button data-sf="${k}" class="${statusFilter === k ? 'on' : ''}">${l} <span class="muted">${c}</span></button>`)}</div>
       <div class="tw" style="max-height:560px"><table class="t"><thead><tr><th>Durum</th><th>Tarih</th><th>Sipariş no</th><th>Mağaza</th><th>Etiketteki ürün → katalog</th><th>Kampanya</th><th>Not</th></tr></thead><tbody>
       ${list.slice(0, 400).map(({ r, o, c }) => html`<tr>
         <td>${ST[r.status]}</td><td class="nowrap">${trDate(o.date)}</td>
         <td class="nowrap"><b>${o.orderNo || '—'}</b>${o.pages > 1 ? html` <span class="badge info">${o.pages} etiket</span>` : ''}</td>
         <td>${storeTag(c.store, o.sender)}</td>
-        <td class="lines small">${c.lines.map((l) => html`<div><span class="q">${l.qty}x</span> ${l.raw} ${l.ignored ? html`<span class="muted">(yoksayılır)</span>` : l.productId ? html`<span class="muted">→</span> <b>${pname(l.productId)}</b>${l.mult > 1 ? html` <span class="badge info">×${l.mult}</span>` : ''}` : html`<span class="badge err">eşleşmedi</span>`}</div>`)}</td>
+        <td class="lines small">${c.lines.map((l) => html`<div><span class="q">${l.qty}x</span> ${l.raw} ${l.ignored ? html`<span class="muted">(yoksayılır)</span>` : l.productId ? html`<span class="muted">→</span> <b>${pname(l.productId)}</b>${l.mult > 1 ? html` <span class="badge info">×${l.mult}</span>` : ''}` : html`<span class="badge err">eşleşmedi</span>`}</div>`)}${r.status === 'fix' && r.old ? html`<div class="xs muted" style="margin-top:4px">Önceki (hatalı) okuma:</div>${r.old.map((it) => html`<div class="xs was"><span class="q">${it.qty}x</span> ${it.name}</div>`)}` : ''}</td>
         <td class="small">${c.rewards.length ? c.rewards.map((rw) => html`<div class="gift">+${rw.qty} ${pname(rw.productId)}</div>`) : html`<span class="muted">—</span>`}</td>
-        <td class="small muted">${r.note || (o.warnings || []).join(', ')}</td>
+        <td class="small muted">${r.status === 'fix' ? `${trDate(r.target.date)} kaydı düzeltilecek` : r.note || (o.warnings || []).join(', ')}</td>
       </tr>`)}
       </tbody></table></div>
       ${list.length > 400 ? html`<div class="card-f small muted">İlk 400 satır gösteriliyor (toplam ${n(list.length)}). Kaydet tüm siparişleri kaydeder.</div>` : ''}
@@ -178,7 +181,7 @@ export default async function uploadPage(ctx) {
       const { read } = pending;
       // Parça parça gönder; hepsi tek yükleme kaydında toplanır
       const CH = 400;
-      const r = { results: [], counts: { new: 0, dup: 0, merge: 0, error: 0 }, batchId: null };
+      const r = { results: [], counts: { new: 0, dup: 0, merge: 0, fix: 0, error: 0 }, batchId: null };
       for (let k = 0; k < read.orders.length; k += CH) {
         btn.lastChild.textContent = `Kaydediliyor… ${Math.min(k + CH, read.orders.length)}/${read.orders.length}`;
         const part = await api.post('import', { orders: read.orders.slice(k, k + CH), files: read.files, pages: read.pages, batchId: r.batchId });
@@ -187,10 +190,10 @@ export default async function uploadPage(ctx) {
         for (const key of Object.keys(r.counts)) r.counts[key] += part.counts[key] || 0;
       }
       invalidateOrders();
-      const dates = [...new Set(r.results.filter((x) => x.status === 'new').map((x) => read.orders[x.i].date))].sort();
+      const dates = [...new Set(r.results.filter((x) => x.status === 'new' || x.status === 'fix').map((x) => read.orders[x.i].date))].sort();
       pending = null;
       mount($('#preview'), html`<div class="callout ok">${icon('check')}<div class="c"><b>${n(r.counts.new)} yeni sipariş kaydedildi</b>
-        ${n(r.counts.dup)} mükerrer etiket hesaba katılmadı${r.counts.merge ? `, ${n(r.counts.merge)} devam etiketi mevcut siparişlere eklendi` : ''}.
+        ${n(r.counts.dup)} mükerrer etiket hesaba katılmadı${r.counts.merge ? `, ${n(r.counts.merge)} devam etiketi mevcut siparişlere eklendi` : ''}${r.counts.fix ? `, ${n(r.counts.fix)} siparişin ürünleri düzeltildi` : ''}.
         <div class="row wrap" style="margin-top:10px">${dates.length ? html`<button class="btn primary sm" id="goProd">${icon('factory')}Üretim listesini aç</button>` : ''}<button class="btn sm" id="again">Yeni yükleme</button></div></div></div>`);
       const gp = $('#goProd');
       if (gp) gp.addEventListener('click', () => { setRange(dates[0], dates[dates.length - 1]); ctx.navigate('production'); });

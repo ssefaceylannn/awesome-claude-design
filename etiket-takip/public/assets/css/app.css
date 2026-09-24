@@ -274,7 +274,9 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 
 .empty { text-align: center; padding: 42px 16px !important; color: var(--muted); }
 .empty svg.i { width: 34px; height: 34px; stroke-width: 1.4; margin-bottom: 8px; color: var(--border-strong); }
 .empty b { display: block; color: var(--text-2); margin-bottom: 4px; font-size: .95rem; }
-.lines div { white-space: nowrap; }
+.lines { min-width: 280px; }
+.lines div { white-space: normal; padding-left: 26px; text-indent: -26px; }
+.lines .was { color: var(--muted); text-decoration: line-through; }
 .lines .q { font-weight: 700; display: inline-block; min-width: 26px; }
 .gift { color: var(--brand); font-weight: 600; }
 .unm { color: var(--warn); }

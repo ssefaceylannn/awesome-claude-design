@@ -21,6 +21,13 @@ export const DEFAULT_NOISE = [
 ];
 
 export const IGNORE = '__ignore';
+
+/**
+ * Yalnızca eski sistem (Kampanya Hesaplama) arşivinde geçen ad: hangi ürün olduğu bilinmez,
+ * geçmiş gün toplamları sabittir. Eşleştirme bekleyenler sayısına katılmaz.
+ * ("one size" eski sistemin Excel satırlarını virgülden bölmesiyle oluşmuş sahte addır.)
+ */
+export const isArchiveOnly = (v) => !!(v && (v.archive || /^one size$/i.test(String(v.raw || '').trim()) || /^\(ürün otomatik tespit/i.test(String(v.raw || ''))));
 export const BUNDLE = '__bundle';
 
 const tokenHit = (kw, tok) => {

@@ -155,6 +155,10 @@ const SANITIZE = {
     retentionDays: int(s && s.retentionDays, 30, 3650, 365),
     noiseWords: (Array.isArray(s && s.noiseWords) ? s.noiseWords : DEFAULT_NOISE).map((w) => str(w, 40)).filter(Boolean).slice(0, 500),
     companyName: str(s && s.companyName, 80),
+    // Marka → yalnızca satıldığı mağazalar (boş/yok = tüm mağazalar). null = henüz ayarlanmadı.
+    brandStores: s && s.brandStores && typeof s.brandStores === 'object'
+      ? Object.fromEntries(Object.entries(s.brandStores).slice(0, 200).map(([b, ids]) => [str(b, 60), (Array.isArray(ids) ? ids : []).filter(id).slice(0, 200)]).filter(([b]) => b))
+      : null,
   }),
 };
 
@@ -301,10 +305,28 @@ async function importOrders(req, user) {
     if (existingDate) {
       return o.startsAsContinuation
         ? { i, k, status: 'merge', target: { k: existingKey, date: existingDate }, note: 'Önceki etiketin devamı, mevcut siparişe eklenecek' }
-        : { i, k, status: 'dup', existingDate, note: `Daha önce ${existingDate} tarihinde kaydedilmiş` };
+        : { i, k, status: 'dup', existingDate, target: { k: existingKey, date: existingDate }, note: `Daha önce ${existingDate} tarihinde kaydedilmiş` };
     }
     return { i, k, status: 'new' };
   });
+
+  // Aynı etiket tekrar yüklendi ve ürünleri farklı okundu (ör. okuyucu düzeltmesinden sonra):
+  // kayıttaki ürün satırları yeni okumayla düzeltilir. Sipariş yine bir kez sayılır.
+  const sig = (items) => items.map((it) => `${fold(it.name)}|${it.qty}`).sort().join('\n');
+  const dupDates = [...new Set(results.filter((r) => r.status === 'dup' && r.target).map((r) => r.target.date))];
+  const dupDays = new Map();
+  await pmap(dupDates, 8, async (d) => dupDays.set(d, await getJSON(`day/${d}`)));
+  for (const r of results) {
+    if (r.status !== 'dup' || !r.target) continue;
+    const day = dupDays.get(r.target.date);
+    const rec = day && day.orders.find((x) => x.k === r.target.k);
+    const o = orders[r.i];
+    if (!rec || rec.summary || rec.mergedBy || (rec.source || 'pdf') !== o.source || !o.items.length) continue;
+    if (sig(rec.items || []) === sig(o.items)) continue;
+    r.status = 'fix';
+    r.old = rec.items;
+    r.note = `${r.target.date} tarihli kayıt; ürün satırları bu okumayla düzeltilecek`;
+  }
   if (dryRun) return json({ results });
   need(user, 'admin', 'personel');
 
@@ -333,6 +355,7 @@ async function importOrders(req, user) {
   // 2) Gün kayıtlarına yaz
   const dayAdds = new Map();
   const dayMerges = new Map();
+  const dayFixes = new Map();
   let lastKey = null;
   for (const r of results) {
     const o = orders[r.i];
@@ -354,9 +377,13 @@ async function importOrders(req, user) {
       if (!dayMerges.has(t.date)) dayMerges.set(t.date, []);
       dayMerges.get(t.date).push({ k: t.k, items: o.items, pages: o.pages });
       lastKey = t;
+    } else if (r.status === 'fix') {
+      const t = r.target;
+      if (!dayFixes.has(t.date)) dayFixes.set(t.date, []);
+      dayFixes.get(t.date).push({ k: t.k, items: o.items });
     }
   }
-  const dates = [...new Set([...dayAdds.keys(), ...dayMerges.keys()])];
+  const dates = [...new Set([...dayAdds.keys(), ...dayMerges.keys(), ...dayFixes.keys()])];
   await pmap(dates, 8, (date) =>
     update(`day/${date}`, (day) => {
       const list = day.orders;
@@ -366,6 +393,10 @@ async function importOrders(req, user) {
         const t = list.find((x) => x.k === m.k);
         if (t) { mergeItems(t, m.items); t.pages = (t.pages || 1) + m.pages; t.mergedBy = user.u; }
       }
+      for (const f of dayFixes.get(date) || []) {
+        const t = list.find((x) => x.k === f.k);
+        if (t && !t.mergedBy) { t.items = f.items.map((it) => ({ name: it.name, qty: it.qty })); t.fixedBy = user.u; t.fixedAt = at; }
+      }
       return day;
     }, () => ({ date, orders: [] })),
   );
@@ -373,21 +404,26 @@ async function importOrders(req, user) {
 
   // 3) Etiketlerde görülen ürün adları (eşleştirme ekranı için)
   const names = new Map();
+  const addName = (it, date, sign) => {
+    const k = fold(it.name);
+    const n = names.get(k) || { raw: it.name, qty: 0, lines: 0, date };
+    n.qty += sign * it.qty; n.lines += sign; names.set(k, n);
+  };
   for (const r of results) {
-    if (r.status !== 'new' && r.status !== 'merge') continue;
+    if (r.status !== 'new' && r.status !== 'merge' && r.status !== 'fix') continue;
     const o = orders[r.i];
-    for (const it of o.items) {
-      const k = fold(it.name);
-      const n = names.get(k) || { raw: it.name, qty: 0, lines: 0, date: o.date };
-      n.qty += it.qty; n.lines++; names.set(k, n);
-    }
+    for (const it of o.items) addName(it, o.date, 1);
+    // Düzeltilen kayıttaki eski (hatalı okunmuş) adlar eşleştirme ekranından düşer
+    if (r.status === 'fix') for (const it of r.old || []) addName(it, o.date, -1);
   }
   if (names.size) {
     await update('labelnames', (all) => {
       for (const [k, n] of names) {
         const cur = all[k] || { raw: n.raw, qty: 0, lines: 0, firstSeen: n.date };
-        cur.qty += n.qty; cur.lines += n.lines; cur.lastSeen = n.date > (cur.lastSeen || '') ? n.date : cur.lastSeen; cur.raw = cur.raw || n.raw;
-        all[k] = cur;
+        cur.qty += n.qty; cur.lines += n.lines; cur.raw = cur.raw || n.raw;
+        if (n.qty > 0) { cur.lastSeen = n.date > (cur.lastSeen || '') ? n.date : cur.lastSeen; delete cur.archive; }
+        if (cur.lines <= 0 || cur.qty <= 0) delete all[k];
+        else all[k] = cur;
       }
       return all;
     }, {});
@@ -398,6 +434,7 @@ async function importOrders(req, user) {
     new: results.filter((r) => r.status === 'new').length,
     dup: results.filter((r) => r.status === 'dup').length,
     merge: results.filter((r) => r.status === 'merge').length,
+    fix: results.filter((r) => r.status === 'fix').length,
     error: results.filter((r) => r.status === 'error').length,
   };
   const part = {
@@ -420,7 +457,7 @@ async function importOrders(req, user) {
     };
   });
   const fl = part.files;
-  await audit(user, 'etiket yükleme', `${counts.new} yeni, ${counts.dup} mükerrer, ${counts.merge} devam · ${fl.length > 3 ? `${fl.length} dosya (${fl.slice(0, 2).join(', ')}…)` : fl.join(', ')}`);
+  await audit(user, 'etiket yükleme', `${counts.new} yeni, ${counts.dup} mükerrer, ${counts.merge} devam${counts.fix ? `, ${counts.fix} düzeltildi` : ''} · ${fl.length > 3 ? `${fl.length} dosya (${fl.slice(0, 2).join(', ')}…)` : fl.join(', ')}`);
   await maybeCleanup(user);
   return json({ batchId, results, counts });
 }

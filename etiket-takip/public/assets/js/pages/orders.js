@@ -6,7 +6,7 @@ import { rangePicker, storeFilters, filterLabel } from '../core/widgets.js';
 import { exportTable } from '../core/excel.js';
 
 const PAGE = 50;
-const pname = (id) => (state.ctx.productsById.get(id) || {}).name || '?';
+const pname = (id) => state.ctx.label(id);
 
 export async function openOrder(o, onChange) {
   const c = computeOrder(o, state.ctx);

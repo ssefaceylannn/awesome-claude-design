@@ -29,6 +29,7 @@ function normalizeItems(pdfItems, pageHeight) {
       x: t[4],
       y: pageHeight - t[5], // yukarıdan aşağı
       size: Math.hypot(t[0], t[1]),
+      w: +it.width || 0,
       rotated,
     });
   }
@@ -65,11 +66,59 @@ const BARE_QTY = /^(\d{1,4})\s*[xX×]$/;
 const INLINE_QTY = /^(\d{1,4})\s*[xX×]\s+(.+)$/;
 
 /**
- * Ürün satırlarını ayrıştır. İki etiket düzeni desteklenir:
- *  - Aynı hizada: "1x" ile ürün adı aynı satırda, uzun ad alt satırlara kayar (Trendyol örneği).
- *  - Ortalanmış: adet hücrede dikey ortalanmış; ad satırları adetin üstünde/altında olabilir.
- *    Bu durumda her ad satırı dikeyde en yakın adete bağlanır. Aksi hâlde
- *    "1x Daily Shake" + "Ginger Shot" tek ürün gibi birleşirdi.
+ * Ad satırlarını (yukarıdan aşağı) adetlere ardışık bloklar hâlinde böl: her adet
+ * kendi hücresindeki satırları alır, hiçbir adet adsız kalmaz. Adet hücrede üste,
+ * ortaya ya da alta hizalı olabilir; sayfadaki tüm ürünlere en iyi uyan hizalama seçilir.
+ * Eşit durumda satır arası boşluğun büyük olduğu yerden bölünür (iki ürün arası
+ * boşluk, aynı adın alt satırına geçişten büyüktür).
+ * Eski "en yakın adet" yöntemi, alta hizalı etikette "1x DetoxMix" + "Daily Shake
+ * Ara Öğün Tozu (Kakao" satırlarını tek ürün sanıyordu.
+ */
+function assignBlocks(qtys, lines) {
+  const n = lines.length, k = qtys.length;
+  // Satır i, satır i-1'in devamı olabilir mi? Önceki satırda bir sonraki kelimeye yer
+  // varken alt satıra geçilmez: "DetoxMix" kısa bir satırdır, altındaki "Daily Shake…" yeni üründür.
+  const limit = Math.max(...lines.map((l) => l.right));
+  const wraps = lines.map((l, i) => {
+    if (i === 0) return true;
+    const prev = lines[i - 1];
+    const word = l.text.split(' ')[0];
+    const wordW = ((l.right - l.x) * (word.length + 1)) / Math.max(1, l.text.length);
+    return prev.right + wordW > limit - 2;
+  });
+  const anchors = [(g) => g[0].y, (g) => (g[0].y + g[g.length - 1].y) / 2, (g) => g[g.length - 1].y];
+  let best = null;
+  for (const anchor of anchors) {
+    // dp[j][i]: ilk j adete ilk i satırı dağıtmanın en düşük maliyeti
+    const dp = Array.from({ length: k + 1 }, () => new Array(n + 1).fill(Infinity));
+    const cut = Array.from({ length: k + 1 }, () => new Array(n + 1).fill(-1));
+    dp[0][0] = 0;
+    for (let j = 1; j <= k; j++) {
+      for (let i = j; i <= n - (k - j); i++) {
+        for (let s = j - 1; s < i; s++) {
+          if (dp[j - 1][s] === Infinity) continue;
+          const g = lines.slice(s, i);
+          // Aynı satırdaki adet başka bir ürüne verilemez
+          if (g.some((l) => l.sameRowQty && l.sameRowQty !== qtys[j - 1])) continue;
+          const gap = s > 0 ? lines[s].y - lines[s - 1].y : 0;
+          let c = dp[j - 1][s] + Math.abs(qtys[j - 1].y - anchor(g)) - gap * 0.01;
+          for (let x = s + 1; x < i; x++) if (!wraps[x]) c += 100;
+          if (c < dp[j][i]) { dp[j][i] = c; cut[j][i] = s; }
+        }
+      }
+    }
+    if (dp[k][n] === Infinity || (best && dp[k][n] >= best.cost)) continue;
+    const groups = [];
+    for (let j = k, i = n; j > 0; i = cut[j][i], j--) groups.unshift([qtys[j - 1], lines.slice(cut[j][i], i)]);
+    best = { cost: dp[k][n], groups };
+  }
+  return best ? best.groups : [];
+}
+
+/**
+ * Ürün satırlarını ayrıştır. Adet ("1x") ürün hücresinde üste, ortaya veya alta
+ * hizalı olabilir; uzun adlar alt satırlara kayar. Satırlar assignBlocks ile adetlere
+ * bölünür.
  */
 function parseItems(rows, lastMetaRow, iFirstQty, warnings) {
   const firstY = rows[iFirstQty].y;
@@ -92,19 +141,17 @@ function parseItems(rows, lastMetaRow, iFirstQty, warnings) {
     }
     if (q) qtys.push(q);
     const text = clean(rest.map((it) => it.str).join(' '));
-    if (text && !CONT_RE.test(lower(text))) lines.push({ text, y: r.y, x: rest[0].x, sameRowQty: q });
+    if (text && !CONT_RE.test(lower(text))) {
+      const right = Math.max(...rest.map((it) => it.x + (it.w || it.str.length * (it.size || 10) * 0.5)));
+      lines.push({ text, y: r.y, x: rest[0].x, right, sameRowQty: q });
+    }
   }
   if (!qtys.length) return [];
   qtys.sort((a, b) => a.y - b.y);
   lines.sort((a, b) => a.y - b.y);
 
-  const aligned = qtys.every((q) => lines.some((l) => l.sameRowQty === q)) && !lines.some((l) => l.y < qtys[0].y - 3.5);
-  if (aligned) {
-    let cur = null;
-    for (const l of lines) {
-      if (l.sameRowQty) { cur = l.sameRowQty; cur.name = l.text; continue; }
-      if (cur && l.x > cur.x + 5) cur.name = clean(cur.name + ' ' + l.text); // alt satıra kaymış ad
-    }
+  if (lines.length >= qtys.length) {
+    for (const [q, group] of assignBlocks(qtys, lines)) q.name = clean(group.map((l) => l.text).join(' '));
   } else {
     for (const l of lines) {
       let best = l.sameRowQty;

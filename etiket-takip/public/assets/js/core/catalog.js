@@ -16,32 +16,53 @@ const CAT_BY_PREFIX = {
   YAG: 'Bitkisel Yağ', OKO: 'Oda Kokusu', KOZ: 'Kozmetik & Bakım', AKS: 'Aksesuar',
 };
 
-/** Satırları ayrıştır: sekme (Excel'den kopyala) veya ; ile ayrılmış. 1 sütun = yalnızca ürün adı. */
+const HEAD = {
+  sku: /^(sku|stok ?kodu|stok|urun ?kodu|kod|barkod)$/,
+  brand: /^(marka|brand)$/,
+  name: /^(urun|urun ?adi|urunler|ad|product|product ?name|isim)$/,
+  category: /^(kategori|category|grup|urun ?grubu)$/,
+};
+
+/**
+ * Satırları ayrıştır: sekme (Excel'den kopyala) veya ; ile ayrılmış.
+ * Başlık satırı varsa sütunlar ona göre bulunur (SKU / Marka / Ürün / Kategori, sıra fark etmez).
+ * Başlık yoksa: 4 sütun = SKU, Marka, Ürün, Kategori · 3 = SKU, Marka, Ürün · 2 = SKU, Ürün · 1 = Ürün.
+ * Dönen dizide ayrıca: .lines (boş olmayan satır sayısı), .repeats (tekrar eden satırlar), .header (başlık bulundu mu)
+ */
 export function parseProductList(text) {
   const rows = [];
-  const seen = new Set();
+  const seen = new Map();
+  const repeats = [];
+  let map = null, header = false, lines = 0;
   for (const line of String(text || '').split(/\r?\n/)) {
     if (!line.trim()) continue;
     let cols = line.includes('\t') ? line.split('\t') : line.includes(';') ? line.split(';') : [line];
     cols = cols.map((c) => c.replace(/\s+/g, ' ').trim());
+    if (!rows.length && !header) {
+      const m = {};
+      cols.forEach((c, i) => { for (const [k, re] of Object.entries(HEAD)) if (m[k] == null && re.test(fold(c))) m[k] = i; });
+      if (m.name != null) { map = m; header = true; continue; }
+    }
+    lines++;
     let sku = '', brand = '', name = '', category = '';
-    if (cols.length >= 3) [sku, brand, name, category = ''] = cols;
+    const at = (i) => (i == null ? '' : cols[i] || '');
+    if (map) [sku, brand, name, category] = [at(map.sku), at(map.brand), at(map.name), at(map.category)];
+    else if (cols.length >= 3) [sku, brand, name, category = ''] = cols;
     else if (cols.length === 2) [sku, name] = cols;
     else [name] = cols;
     if (!name) continue;
-    if (/^(ürün|urun|product)( adı)?$/i.test(name) && /^sku|stok/i.test(sku)) continue; // başlık satırı
-    const key = (normSku(sku) || '') + '|' + nospace(name);
-    if (seen.has(key)) continue; // aynı satır tekrar yapıştırılmışsa bir kez
-    seen.add(key);
+    const key = (normSku(sku) || '') + '|' + fold(brand) + '|' + nospace(name);
+    if (seen.has(key)) { repeats.push({ line: lines, first: seen.get(key), sku, brand, name }); continue; } // aynı satır tekrar yapıştırılmışsa bir kez
+    seen.set(key, lines);
     rows.push({ sku, brand, name, category });
   }
-  return rows;
+  return Object.assign(rows, { lines, repeats, header });
 }
 
 /**
  * @returns {{ products, kept:[{row, old}], added:[row], removed:[product], merged, remap:{eskiId: yeniId}, duplicates:[name] }}
  */
-export function planCatalogReplace(existing, rows, noise) {
+export function planCatalogReplace(existing, rows, noise, { mode = 'replace' } = {}) {
   const pool = [...existing];
   const take = (pred) => { const i = pool.findIndex(pred); return i >= 0 ? pool.splice(i, 1)[0] : null; };
   const kept = [], added = [], products = [];
@@ -70,6 +91,13 @@ export function planCatalogReplace(existing, rows, noise) {
       added.push(r);
     }
   });
+  if (mode === 'append') {
+    // Mevcut katalog aynen kalır (sırası dahil); eşleşenlerin SKU/marka/kategorisi güncellenir, yeniler sona eklenir
+    const upd = new Map(kept.map((k) => [k.old.id, products.find((p) => p.id === k.old.id)]));
+    const addedIds = new Set(products.filter((p) => !existing.some((e) => e.id === p.id)).map((p) => p.id));
+    const out = [...existing.map((p) => upd.get(p.id) || p), ...products.filter((p) => addedIds.has(p.id))];
+    return { products: out, kept, added, removed: [], merged: 0, remap: {}, duplicates: dupNames(out), mode };
+  }
   // Listede olmayan ama başka bir ürünün kopyası olan kayıtlar (ör. eski sistemden gelen
   // "Ham Kakao Tozu" ile "Ham Kakao Tozu - 125 gr"): eşleşme kelimeleri kalan ürüne taşınır,
   // kampanya/eşleştirme bağlantıları ona yönlendirilir.
@@ -90,8 +118,11 @@ export function planCatalogReplace(existing, rows, noise) {
     best.keywords = uniqLines(lines);
     remap[old.id] = best.id;
   }
+  return { products, kept, added, removed, merged: Object.keys(remap).length, remap, duplicates: dupNames(products), mode };
+}
+
+function dupNames(products) {
   const counts = new Map();
   for (const p of products) counts.set(nospace(p.name), (counts.get(nospace(p.name)) || 0) + 1);
-  const duplicates = [...new Set(products.filter((p) => counts.get(nospace(p.name)) > 1).map((p) => p.name))];
-  return { products, kept, added, removed, merged: Object.keys(remap).length, remap, duplicates };
+  return [...new Set(products.filter((p) => counts.get(nospace(p.name)) > 1).map((p) => p.name))];
 }

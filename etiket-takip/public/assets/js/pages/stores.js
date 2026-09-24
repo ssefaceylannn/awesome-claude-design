@@ -81,6 +81,7 @@ export default async function storesPage(ctx) {
     const counts = new Map();
     const unknown = new Map();
     for (const o of recent) {
+      if (o.summary) continue; // eski sistem arşiv özetleri gerçek sipariş/gönderici değildir
       const s = state.ctx.resolveStore(o.sender);
       if (s) counts.set(s.id, (counts.get(s.id) || 0) + 1);
       else { const k = fold(o.sender); const u = unknown.get(k) || { sender: o.sender, platform: o.platform, n: 0 }; u.n++; unknown.set(k, u); }

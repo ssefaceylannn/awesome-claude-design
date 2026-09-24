@@ -2,7 +2,8 @@
 import { html, mount, icon, toast, n, trDate, emptyState, collator, modal, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
 import { api, state, isAdmin, saveSection } from '../core/api.js';
 import { fold } from '../shared/text.js';
-import { IGNORE, BUNDLE } from '../shared/matcher.js';
+import { IGNORE, BUNDLE, isArchiveOnly } from '../shared/matcher.js';
+import { brandResolved } from '../shared/calc.js';
 import { productForm } from './products.js';
 import { refreshBadges } from '../app.js';
 
@@ -10,10 +11,12 @@ const FILTERS = [
   ['todo', 'Eşleşmeyen'],
   ['ambiguous', 'Belirsiz'],
   ['low', 'Düşük güven'],
+  ['bundle', 'Birden çok ürün'],
+  ['brand', 'Mağazaya göre'],
   ['manual', 'Elle atanan'],
   ['auto', 'Otomatik'],
-  ['bundle', 'Set (birden çok ürün)'],
   ['ignored', 'Yoksayılan'],
+  ['archive', 'Eski arşiv'],
   ['all', 'Tümü'],
 ];
 
@@ -26,10 +29,12 @@ export default async function matchingPage(ctx) {
 
   mount(ctx.actions, html`<a class="btn" href="#/products">${icon('box')}Ürün kataloğu</a>`);
 
-  function classify(r) {
+  function classify(r, x) {
     if (r.ignored) return 'ignored';
+    if (r.method !== 'manual' && !r.productId && !r.parts && isArchiveOnly(x)) return 'archive';
     if (r.parts && r.parts.length) return 'bundle';
     if (r.method === 'manual') return 'manual';
+    if (brandResolved(r, state.ctx)) return 'brand';
     if (r.method === 'ambiguous') return 'ambiguous';
     if (!r.productId) return 'todo';
     if (r.confidence < 0.6) return 'low';
@@ -38,8 +43,8 @@ export default async function matchingPage(ctx) {
 
   function render() {
     const products = state.config.products.filter((p) => p.active !== false);
-    const pname = (id) => (state.ctx.productsById.get(id) || {}).name || '?';
-    const rows = names.map((x) => ({ ...x, r: state.ctx.match(x.raw) })).map((x) => ({ ...x, cls: classify(x.r) }));
+    const pname = (id) => state.ctx.label(id);
+    const rows = names.map((x) => ({ ...x, r: state.ctx.match(x.raw) })).map((x) => ({ ...x, cls: classify(x.r, x) }));
     const count = Object.fromEntries(FILTERS.map(([k]) => [k, k === 'all' ? rows.length : rows.filter((x) => x.cls === k).length]));
     if (!filter) filter = count.todo ? 'todo' : count.ambiguous ? 'ambiguous' : 'all';
     const ql = q.toLocaleLowerCase('tr-TR');
@@ -52,13 +57,13 @@ export default async function matchingPage(ctx) {
     mount(ctx.el, html`<div class="stack">
       <div class="kpis">
         <div class="kpi"><div class="l">Farklı etiket adı</div><div class="v">${n(rows.length)}</div><div class="s">Tüm mağazalardan</div></div>
-        <div class="kpi"><div class="l">Otomatik eşleşen</div><div class="v">${n(count.auto + count.low)}</div><div class="s">${n(count.low)} tanesi düşük güvenli</div></div>
+        <div class="kpi"><div class="l">Otomatik eşleşen</div><div class="v">${n(count.auto + count.low + count.brand)}</div><div class="s">${n(count.low)} tanesi düşük güvenli</div></div>
         <div class="kpi"><div class="l">Elle atanan</div><div class="v">${n(count.manual)}</div><div class="s">${n(count.ignored)} yoksayılan</div></div>
         <div class="kpi ${count.todo + count.ambiguous ? '' : 'hl'}"><div class="l">Bekleyen</div><div class="v">${n(count.todo + count.ambiguous)}</div><div class="s">${n(unresolvedQty)} adet üretim listesine girmiyor</div></div>
       </div>
       <div class="card" id="mCard">
         <div class="card-h" style="gap:12px">
-          <div class="seg">${FILTERS.map(([k, l]) => html`<button data-f="${k}" class="${filter === k ? 'on' : ''}">${l} <span class="muted">${count[k]}</span></button>`)}</div>
+          <div class="seg">${FILTERS.filter(([k]) => count[k] || k === filter || k === 'todo' || k === 'all').map(([k, l]) => html`<button data-f="${k}" class="${filter === k ? 'on' : ''}">${l} <span class="muted">${count[k]}</span></button>`)}</div>
           <span class="spacer"></span>
           <div class="search" style="width:260px;max-width:100%">${icon('search')}<input class="input sm" id="q" placeholder="Ad veya ürün ara…" value="${q}"></div>
         </div>
@@ -73,25 +78,29 @@ export default async function matchingPage(ctx) {
             auto: html`<span class="badge ok">Otomatik · %${Math.round(r.confidence * 100)}</span>`,
             manual: html`<span class="badge violet">Elle</span>`,
             ignored: html`<span class="badge">Yoksayıldı</span>`,
-            bundle: html`<span class="badge info">Set · ${r.method === 'manual' ? 'elle' : 'otomatik'}</span>`,
+            bundle: r.method === 'manual'
+              ? html`<span class="badge info">Birden çok ürün · elle</span>`
+              : html`<span class="badge warn" title="Etiketteki tek satırda birden çok ürün adı var; her biri ayrı ürün olarak sayılıyor. Genellikle etiketin hatalı okunmasıdır: ilgili PDF'i tekrar yüklerseniz sipariş düzeltilir.">İki ürün tek satırda · kontrol edin</span>`,
+            brand: html`<span class="badge ok" title="Aynı adlı ürün birden çok markada var; etiket hangi mağazadan geldiyse o mağazada satılan markanın ürünü sayılır (Ürünler → Markalar).">Mağazanın markasına göre</span>`,
+            archive: html`<span class="badge" title="Bu ad yalnızca eski sistemden aktarılan günlük özetlerde geçiyor; hangi ürün olduğu bilinmiyor ve geçmiş toplamlar sabit. İşlem gerekmez.">Eski arşiv</span>`,
           }[x.cls];
           const partsText = r.parts ? r.parts.map((pt) => `${pt.qty > 1 ? pt.qty + '× ' : ''}${pname(pt.productId)}`).join(' + ') : '';
           const autoRes = al ? null : r;
           return html`<tr>
             ${admin ? selTd(x.key, sel) : ''}
-            <td><b>${x.raw}</b>${x.cls === 'ambiguous' ? html`<div class="xs unm">Adaylar: ${r.candidates.map(pname).join(' · ')}</div>` : ''}</td>
+            <td><b>${x.raw}</b>${x.cls === 'brand' ? html`<div class="xs muted">${brandResolved(r, state.ctx).map(pname).join(' · ')}</div>` : ''}${x.cls === 'ambiguous' ? html`<div class="xs unm">Adaylar: ${r.candidates.map(pname).join(' · ')}</div>` : ''}</td>
             <td class="num">${n(x.qty)}</td>
             <td class="small nowrap">${trDate(x.lastSeen)}</td>
             <td>${badge}</td>
             <td>${admin ? html`<select class="input sm" data-key="${x.key}">
-                <option value="">${autoRes && autoRes.productId ? `Otomatik → ${pname(autoRes.productId)}` : autoRes && autoRes.parts ? `Otomatik → ${partsText}` : 'Otomatik (eşleşme yok)'}</option>
+                <option value="">${autoRes && autoRes.productId ? `Otomatik → ${pname(autoRes.productId)}` : autoRes && autoRes.parts ? `Otomatik → ${partsText}` : x.cls === 'brand' ? `Otomatik → mağazaya göre: ${brandResolved(r, state.ctx).map(pname).join(' / ')}` : 'Otomatik (eşleşme yok)'}</option>
                 <option value="${BUNDLE}" ${al && al.productId === BUNDLE ? 'selected' : ''}>＋ Birden çok ürün (set)…${al && al.productId === BUNDLE ? ' ' + partsText : ''}</option>
                 ${r.candidates && r.candidates.length ? html`<optgroup label="Öneriler">${r.candidates.map((id) => html`<option value="${id}" ${al && al.productId === id ? 'selected' : ''}>${pname(id)}</option>`)}</optgroup>` : ''}
-                <optgroup label="Tüm ürünler">${products.map((p) => html`<option value="${p.id}" ${al && al.productId === p.id && !(r.candidates || []).includes(p.id) ? 'selected' : ''}>${p.name}</option>`)}</optgroup>
+                <optgroup label="Tüm ürünler">${products.map((p) => html`<option value="${p.id}" ${al && al.productId === p.id && !(r.candidates || []).includes(p.id) ? 'selected' : ''}>${state.ctx.labelOf(p)}</option>`)}</optgroup>
                 <option value="${IGNORE}" ${al && al.productId === IGNORE ? 'selected' : ''}>✕ Yoksay (ürün değil)</option>
               </select>${r.parts ? html`<div class="xs" style="margin-top:4px">→ <b>${partsText}</b></div>` : ''}` : r.productId ? html`<b>${pname(r.productId)}</b>` : r.parts ? html`<b>${partsText}</b>` : html`<span class="muted">—</span>`}</td>
             <td>${admin && al && al.productId !== IGNORE && al.productId !== BUNDLE ? html`<input class="input sm" type="number" min="1" max="1000" value="${al.multiplier || 1}" data-mult="${x.key}" style="width:70px" title="Etiketteki 1 adet kaç ürün sayılsın">` : r.multiplier > 1 ? html`×${r.multiplier}` : html`<span class="muted">×1</span>`}</td>
-            <td class="num">${admin && !r.productId && !r.ignored ? html`<button class="btn sm" data-newp="${x.raw}" title="Bu adla katalogda yeni ürün oluştur">${icon('plus')}Ürün</button>` : ''}</td>
+            <td class="num">${admin && !r.productId && !r.ignored && !r.parts && x.cls !== 'brand' && x.cls !== 'archive' ? html`<button class="btn sm" data-newp="${x.raw}" title="Bu adla katalogda yeni ürün oluştur">${icon('plus')}Ürün</button>` : ''}</td>
           </tr>`;
         }) : html`<tr><td colspan="8">${emptyState('link', filter === 'todo' ? 'Bekleyen eşleştirme yok' : 'Kayıt yok', filter === 'todo' ? 'Tüm etiket adları katalogdaki bir ürünle eşleşiyor.' : '')}</td></tr>`}
         </tbody></table></div>
@@ -116,7 +125,7 @@ export default async function matchingPage(ctx) {
       const products = state.config.products.filter((p) => p.active !== false);
       const ok = await modal({
         title: `${keys.length} etiket adını ürüne ata`, size: 'sm',
-        body: html`<label class="f">Katalogdaki ürün<select class="input" name="p">${products.map((p) => html`<option value="${p.id}">${p.name}</option>`)}</select></label>`,
+        body: html`<label class="f">Katalogdaki ürün<select class="input" name="p">${products.map((p) => html`<option value="${p.id}">${state.ctx.labelOf(p)}</option>`)}</select></label>`,
         actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Ata', value: 'ok', variant: 'primary' }],
         onSubmit: (_, d) => { productId = d.querySelector('[name=p]').value; },
       });
@@ -127,7 +136,7 @@ export default async function matchingPage(ctx) {
       if (!productId) delete aliases[k];
       else aliases[k] = { productId, multiplier: (aliases[k] && aliases[k].multiplier) || 1, by: state.me.username, at: new Date().toISOString() };
     }
-    const pn = productId === IGNORE ? 'yoksay' : productId ? (state.ctx.productsById.get(productId) || {}).name : 'otomatik';
+    const pn = productId === IGNORE ? 'yoksay' : productId ? state.ctx.label(productId) : 'otomatik';
     await saveSection('aliases', aliases, `${keys.length} etiket adı → ${pn}`);
     refreshBadges();
     toast('Eşleştirmeler kaydedildi', 'ok');
@@ -141,7 +150,7 @@ export default async function matchingPage(ctx) {
     let parts = cur.parts ? cur.parts.map((x) => ({ ...x })) : (cur.candidates || []).slice(0, 2).map((id) => ({ productId: id, qty: 1 }));
     while (parts.length < 2) parts.push({ productId: (products[parts.length] || products[0] || {}).id || '', qty: 1 });
     const draw = (d) => mount(d.querySelector('#parts'), parts.map((pt, i) => html`<div class="rule-row">
-      <select class="input" data-pp="${i}">${products.map((p) => html`<option value="${p.id}" ${pt.productId === p.id ? 'selected' : ''}>${p.name}</option>`)}</select>
+      <select class="input" data-pp="${i}">${products.map((p) => html`<option value="${p.id}" ${pt.productId === p.id ? 'selected' : ''}>${state.ctx.labelOf(p)}</option>`)}</select>
       <input class="input" type="number" min="1" value="${pt.qty}" data-pq="${i}" aria-label="Adet">
       <button type="button" class="btn icon ghost danger" data-pd="${i}" ${parts.length <= 1 ? 'disabled' : ''}>${icon('x')}</button></div>`));
     const res = await modal({
@@ -163,7 +172,7 @@ export default async function matchingPage(ctx) {
         const clean = parts.filter((x) => x.productId);
         if (!clean.length) throw new Error('En az bir ürün seçin');
         const aliases = { ...state.config.aliases, [key]: { productId: BUNDLE, parts: clean, by: state.me.username, at: new Date().toISOString() } };
-        await saveSection('aliases', aliases, `${raw} → set: ${clean.map((x) => (state.ctx.productsById.get(x.productId) || {}).name).join(' + ')}`);
+        await saveSection('aliases', aliases, `${raw} → set: ${clean.map((x) => state.ctx.label(x.productId)).join(' + ')}`);
         refreshBadges();
       },
     });
@@ -175,7 +184,7 @@ export default async function matchingPage(ctx) {
     if (!productId) delete aliases[key];
     else aliases[key] = { productId, multiplier: multiplier || (aliases[key] && aliases[key].multiplier) || 1, by: state.me.username, at: new Date().toISOString() };
     const raw = (names.find((x) => x.key === key) || {}).raw || key;
-    const pn = productId === IGNORE ? 'yoksay' : productId ? (state.ctx.productsById.get(productId) || {}).name : 'otomatik';
+    const pn = productId === IGNORE ? 'yoksay' : productId ? state.ctx.label(productId) : 'otomatik';
     await saveSection('aliases', aliases, `${raw} → ${pn}`);
     refreshBadges();
   }

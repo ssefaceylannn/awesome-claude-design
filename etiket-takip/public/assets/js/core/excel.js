@@ -80,7 +80,7 @@ export async function exportProduction({ R, ctx, from, to, filterLabel, includeZ
   ws.columns = [{ width: 48 }, { width: 22 }];
   title(ws, `${company ? company + ' — ' : ''}Üretim / Sevk Listesi`, sub, 2);
   header(ws, 3, ['Ürün', 'Gönderilecek Adet']);
-  body(ws, 4, rows.map((r) => [r.product.name, r.total]), [1]);
+  body(ws, 4, rows.map((r) => [ctx.labelOf(r.product), r.total]), [1]);
   totalRow(ws, 4 + rows.length, ['TOPLAM', rows.reduce((s, r) => s + r.total, 0)], [1]);
   for (let i = 4; i < 4 + rows.length; i++) ws.getCell(i, 2).font = { bold: true, size: 12 };
   if (R.unmatched.size) {
@@ -96,7 +96,7 @@ export async function exportProduction({ R, ctx, from, to, filterLabel, includeZ
   wd.columns = [{ width: 7 }, { width: 44 }, { width: 18 }, { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 }];
   title(wd, 'Ürün detayı', sub, 7);
   header(wd, 3, ['Sıra', 'Ürün', 'Kategori', 'Etiket Adedi', 'Kampanya', 'Toplam', 'Sipariş']);
-  body(wd, 4, rows.map((r, i) => [i + 1, r.product.name, r.product.category || '', r.labelUnits, r.campaignUnits, r.total, r.orders]), [3, 4, 5, 6]);
+  body(wd, 4, rows.map((r, i) => [i + 1, ctx.labelOf(r.product), r.product.category || '', r.labelUnits, r.campaignUnits, r.total, r.orders]), [3, 4, 5, 6]);
   totalRow(wd, 4 + rows.length, ['', 'TOPLAM', '', R.labelUnits - [...R.unmatched.values()].reduce((s, u) => s + u.units, 0), R.campaignUnits, rows.reduce((s, r) => s + r.total, 0), R.orders], [3, 4, 5, 6]);
 
   // 3) Mağaza × ürün
@@ -104,8 +104,8 @@ export async function exportProduction({ R, ctx, from, to, filterLabel, includeZ
   const wm = wb.addWorksheet('Mağaza Bazında', { views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }] });
   wm.columns = [{ width: 40 }, ...stores.map(() => ({ width: 16 })), { width: 14 }];
   title(wm, 'Mağaza bazında gönderilecek adetler', sub, stores.length + 2);
-  header(wm, 3, ['Ürün', ...stores.map((s) => (s.store ? `${s.store.name} (${pLabel(s.platform)})` : `Tanımsız: ${s.sender}`)), 'Toplam']);
-  body(wm, 4, rows.map((r) => [r.product.name, ...stores.map((s) => s.products.get(r.product.id) || 0), r.total]), stores.map((_, i) => i + 1).concat(stores.length + 1));
+  header(wm, 3, ['Ürün', ...stores.map((s) => (s.store ? `${s.store.name} (${pLabel(s.platform)})` : s.archive ? s.sender : `Tanımsız: ${s.sender}`)), 'Toplam']);
+  body(wm, 4, rows.map((r) => [ctx.labelOf(r.product), ...stores.map((s) => s.products.get(r.product.id) || 0), r.total]), stores.map((_, i) => i + 1).concat(stores.length + 1));
   totalRow(wm, 4 + rows.length, ['TOPLAM', ...stores.map((s) => rows.reduce((a, r) => a + (s.products.get(r.product.id) || 0), 0)), rows.reduce((s, r) => s + r.total, 0)], stores.map((_, i) => i + 1).concat(stores.length + 1));
 
   // 4) Mağaza özeti
@@ -113,7 +113,7 @@ export async function exportProduction({ R, ctx, from, to, filterLabel, includeZ
   wo.columns = [{ width: 34 }, { width: 14 }, { width: 12 }, { width: 14 }, { width: 18 }, { width: 16 }, { width: 14 }];
   title(wo, 'Mağaza özeti', sub, 7);
   header(wo, 3, ['Mağaza', 'Platform', 'Sipariş', 'Etiket Adedi', 'Kampanyalı Sipariş', 'Kampanya Adedi', 'Toplam']);
-  body(wo, 4, stores.map((s) => [s.store ? s.store.name : `Tanımsız: ${s.sender}`, pLabel(s.platform), s.orders, s.labelUnits, s.campaignOrders, s.campaignUnits, s.labelUnits + s.campaignUnits]), [2, 3, 4, 5, 6]);
+  body(wo, 4, stores.map((s) => [s.store ? s.store.name : s.archive ? s.sender : `Tanımsız: ${s.sender}`, pLabel(s.platform), s.orders, s.labelUnits, s.campaignOrders, s.campaignUnits, s.labelUnits + s.campaignUnits]), [2, 3, 4, 5, 6]);
   totalRow(wo, 4 + stores.length, ['TOPLAM', '', R.orders, R.labelUnits, R.campaignOrders, R.campaignUnits, R.totalUnits], [2, 3, 4, 5, 6]);
 
   // 5) Kampanyalar
@@ -147,11 +147,11 @@ export async function exportProduction({ R, ctx, from, to, filterLabel, includeZ
     for (const l of c.lines) {
       if (l.ignored) continue;
       const p = l.productId && ctx.productsById.get(l.productId);
-      lines.push([trDate(o.date), o.no, st, pLabel(c.platform), o.recipient, p ? p.name : '⚠ EŞLEŞMEDİ', l.units, l.raw, o.cargoCode]);
+      lines.push([trDate(o.date), o.no, st, pLabel(c.platform), o.recipient, p ? ctx.labelOf(p) : '⚠ EŞLEŞMEDİ', l.units, l.raw, o.cargoCode]);
     }
     for (const r of c.rewards) {
       const p = ctx.productsById.get(r.productId);
-      lines.push([trDate(o.date), o.no, st, pLabel(c.platform), o.recipient, p ? p.name : r.productId, r.qty, 'Kampanya: ' + r.name, o.cargoCode]);
+      lines.push([trDate(o.date), o.no, st, pLabel(c.platform), o.recipient, p ? ctx.labelOf(p) : r.productId, r.qty, 'Kampanya: ' + r.name, o.cargoCode]);
     }
   }
   body(wsO, 4, lines, [6]);

@@ -32,7 +32,7 @@ export function campaignStatus(c) {
   return { k: 'live', label: 'Yayında', cls: 'ok' };
 }
 
-const pn = (id) => (state.ctx.productsById.get(id) || { name: '(silinmiş ürün)' }).name;
+const pn = (id) => state.ctx.label(id);
 const allTypes = () => [...BUILTIN_TYPES, ...(state.config.campaignTemplates || [])];
 
 function productScope(c) {
@@ -157,14 +157,14 @@ async function campaignForm(camp, { copy = false } = {}) {
     onOpen: (d) => {
       const f = (k) => d.querySelector(`[name=${k}]`);
       const ms = multiSelect(d.querySelector('#trig'), {
-        options: products.map((p) => ({ id: p.id, label: p.name, group: p.category || 'Diğer' })).sort((a, b) => collator.compare(a.group, b.group)),
+        options: products.map((p) => ({ id: p.id, label: state.ctx.labelOf(p), group: p.category || 'Diğer' })).sort((a, b) => collator.compare(a.group, b.group)),
         selected: c.triggerProductIds,
         allLabel: 'Tüm ürünler',
         onChange: (v) => { c.triggerProductIds = v; preview(); },
       });
       const drawRewards = () => {
         mount(d.querySelector('#rewards'), c.rewards.map((r, i) => html`<div class="rule-row">
-          <select class="input" data-rp="${i}"><option value="">Aynı üründen</option>${products.map((p) => html`<option value="${p.id}" ${r.productId === p.id ? 'selected' : ''}>${p.name}</option>`)}</select>
+          <select class="input" data-rp="${i}"><option value="">Aynı üründen</option>${products.map((p) => html`<option value="${p.id}" ${r.productId === p.id ? 'selected' : ''}>${state.ctx.labelOf(p)}</option>`)}</select>
           <input class="input" type="number" min="1" value="${r.qty}" data-rq="${i}" aria-label="Adet">
           <button type="button" class="btn icon ghost danger" data-rd="${i}" ${c.rewards.length === 1 ? 'disabled' : ''} title="Kaldır">${icon('x')}</button></div>`));
       };

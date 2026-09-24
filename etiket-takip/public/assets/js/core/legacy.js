@@ -136,7 +136,7 @@ export function convertLegacy(legacy, config, opts = {}) {
   const names = {};
   const seeName = (n, qty, date) => {
     const k = fold(n);
-    const cur = names[k] || { raw: n, qty: 0, lines: 0, firstSeen: date };
+    const cur = names[k] || { raw: n, qty: 0, lines: 0, firstSeen: date, archive: true };
     cur.qty += qty; cur.lines++; cur.lastSeen = !cur.lastSeen || date > cur.lastSeen ? date : cur.lastSeen;
     if (date < cur.firstSeen) cur.firstSeen = date;
     names[k] = cur;

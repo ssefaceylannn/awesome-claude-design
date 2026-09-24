@@ -1,9 +1,10 @@
 // Genel bakış: seçili günün özeti, 14 günlük eğilim, uyarılar.
 import { html, mount, icon, n, pct, addDays, longDate, trDate, trDateTime, today, emptyState, pBadge, parseYmd } from '../core/ui.js';
 import { api, state, fetchOrders, getRange, setRange, can } from '../core/api.js';
-import { aggregate, productionRows } from '../shared/calc.js';
+import { aggregate, productionRows, brandResolved } from '../shared/calc.js';
 import { rangePicker, barChart } from '../core/widgets.js';
 import { campaignStatus } from './campaigns.js';
+import { isArchiveOnly } from '../shared/matcher.js';
 
 export default async function dashboardPage(ctx) {
   let day = getRange().to;
@@ -46,8 +47,8 @@ export default async function dashboardPage(ctx) {
     const top = productionRows(R, state.ctx).sort((a, b) => b.total - a.total).slice(0, 8);
     const maxTop = Math.max(1, ...top.map((t) => t.total));
     let unmatchedNames = 0;
-    for (const v of Object.values(names)) { const m = state.ctx.match(v.raw); if (!m.productId && !m.ignored && !m.parts) unmatchedNames++; }
-    const unknownSenders = new Set(orders.filter((o) => !state.ctx.resolveStore(o.sender)).map((o) => o.sender)).size;
+    for (const v of Object.values(names)) { if (isArchiveOnly(v)) continue; const m = state.ctx.match(v.raw); if (!m.productId && !m.ignored && !m.parts && !brandResolved(m, state.ctx)) unmatchedNames++; }
+    const unknownSenders = new Set(orders.filter((o) => !o.summary && !state.ctx.resolveStore(o.sender)).map((o) => o.sender)).size;
     const live = state.config.campaigns.filter((c) => campaignStatus(c).k === 'live');
     const delta = (a, b) => {
       if (!b) return '';
@@ -78,10 +79,10 @@ export default async function dashboardPage(ctx) {
       </div>
       <div class="grid g-2">
         <div class="card"><div class="card-h"><h2>En çok gönderilecek ürünler</h2><span class="sub">${trDate(day)}</span><span class="spacer"></span><a class="small" href="#/production">Tümü →</a></div>
-          <div class="card-b">${top.length ? html`<div class="hbar">${top.map((t) => html`<span>${t.product.name}</span><b class="num">${n(t.total)}</b><div class="track"><i style="width:${(t.total / maxTop) * 100}%"></i></div>`)}</div>` : emptyState('box', 'Bu gün için sipariş yok', '')}</div></div>
+          <div class="card-b">${top.length ? html`<div class="hbar">${top.map((t) => html`<span>${state.ctx.labelOf(t.product)}</span><b class="num">${n(t.total)}</b><div class="track"><i style="width:${(t.total / maxTop) * 100}%"></i></div>`)}</div>` : emptyState('box', 'Bu gün için sipariş yok', '')}</div></div>
         <div class="card"><div class="card-h"><h2>Mağazalar</h2><span class="sub">${trDate(day)}</span></div>
           <div class="tw"><table class="t"><thead><tr><th>Mağaza</th><th class="num">Sipariş</th><th class="num">Ürün</th><th class="num">Kampanya</th></tr></thead><tbody>
-          ${stores.length ? stores.map((s) => html`<tr><td>${s.store ? html`<span class="row" style="gap:8px;display:inline-flex"><span class="sdot" style="background:${s.store.color}"></span>${s.store.name}</span>` : html`<span class="badge warn">Tanımsız</span>`} ${pBadge(s.platform)}</td><td class="num">${n(s.orders)}</td><td class="num">${n(s.labelUnits)}</td><td class="num">${s.campaignUnits ? html`<span class="gift">+${n(s.campaignUnits)}</span>` : '—'}</td></tr>`) : html`<tr><td colspan="4">${emptyState('store', 'Sipariş yok', '')}</td></tr>`}
+          ${stores.length ? stores.map((s) => html`<tr><td>${s.store ? html`<span class="row" style="gap:8px;display:inline-flex"><span class="sdot" style="background:${s.store.color}"></span>${s.store.name}</span>` : s.archive ? html`<span class="badge">${s.sender}</span>` : html`<span class="badge warn">Tanımsız</span>`} ${pBadge(s.platform)}</td><td class="num">${n(s.orders)}</td><td class="num">${n(s.labelUnits)}</td><td class="num">${s.campaignUnits ? html`<span class="gift">+${n(s.campaignUnits)}</span>` : '—'}</td></tr>`) : html`<tr><td colspan="4">${emptyState('store', 'Sipariş yok', '')}</td></tr>`}
           </tbody></table></div></div>
       </div>
       ${batches.length ? html`<div class="card"><div class="card-h"><h2>Son yüklemeler</h2><span class="spacer"></span>${can('personel') ? html`<a class="small" href="#/upload">Tümü →</a>` : ''}</div><div class="tw"><table class="t"><tbody>
