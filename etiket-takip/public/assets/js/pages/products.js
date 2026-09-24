@@ -4,6 +4,7 @@ import { api, state, isAdmin, saveSection } from '../core/api.js';
 import { createMatcher, autoKeywords } from '../shared/matcher.js';
 
 let labelNames = null;
+const has = (res, id) => res.productId === id || (res.parts || []).some((x) => x.productId === id);
 async function getLabelNames() {
   if (!labelNames) labelNames = Object.values((await api.get('labelnames')).names || {});
   return labelNames;
@@ -61,19 +62,21 @@ export async function productForm(product, { presetName } = {}) {
         for (const ln of names) {
           const r = m(ln.raw);
           const b = before(ln.raw);
-          if (r.productId === next.id || b.productId === next.id) hits.push({ ln, r, b });
+          if (has(r, next.id) || has(b, next.id)) hits.push({ ln, r, b });
         }
         hits.sort((a, b) => b.ln.qty - a.ln.qty);
-        d.querySelector('#hitTitle').textContent = `Bu ürüne düşecek etiket adları (${hits.filter((h) => h.r.productId === next.id).length})`;
+        d.querySelector('#hitTitle').textContent = `Bu ürüne düşecek etiket adları (${hits.filter((h) => has(h.r, next.id)).length})`;
         mount(d.querySelector('#hits'), hits.length ? html`<table class="t"><tbody>${hits.slice(0, 200).map(({ ln, r, b }) => {
-          const gain = r.productId === next.id && b.productId !== next.id;
-          const loss = r.productId !== next.id;
+          const gain = has(r, next.id) && !has(b, next.id);
+          const loss = !has(r, next.id);
           return html`<tr><td class="small">${ln.raw}${gain ? html` <span class="badge ok">yeni</span>` : ''}${loss ? html` <span class="badge err">çıkacak → ${r.productId ? nameOf(r.productId) : 'eşleşmesiz'}</span>` : ''}${r.method === 'manual' ? html` <span class="badge violet">elle</span>` : ''}</td><td class="num small">${n(ln.qty)}</td></tr>`;
         })}</tbody></table>` : html`<div class="muted small" style="padding:14px">Eşleşen etiket adı yok.</div>`);
         const t = d.querySelector('#testName').value.trim();
         if (t) {
           const r = m(t);
-          mount(d.querySelector('#testRes'), r.productId
+          mount(d.querySelector('#testRes'), r.parts
+            ? html`<span class="badge info">Set</span> <b>${r.parts.map((x) => nameOf(x.productId)).join(' + ')}</b> <span class="muted">— iki ayrı ürün olarak sayılır</span>`
+            : r.productId
             ? html`<span class="badge ${r.productId === next.id ? 'ok' : 'info'}">${icon('check')} ${nameOf(r.productId)}</span> <span class="muted">${r.method === 'manual' ? 'elle eşleştirilmiş' : `güven %${Math.round(r.confidence * 100)}`}${r.multiplier > 1 ? ` · ×${r.multiplier}` : ''}</span>`
             : r.method === 'ambiguous'
               ? html`<span class="badge warn">Belirsiz</span> <span class="muted">${r.candidates.map(nameOf).join(' / ')} eşit puan aldı</span>`
@@ -140,7 +143,7 @@ export default async function productsPage(ctx) {
     const counts = new Map();
     for (const ln of names) {
       const m = state.ctx.match(ln.raw);
-      if (m.productId) counts.set(m.productId, (counts.get(m.productId) || 0) + 1);
+      for (const id of m.parts ? m.parts.map((x) => x.productId) : m.productId ? [m.productId] : []) counts.set(id, (counts.get(id) || 0) + 1);
     }
     const cats = [...new Set(all.map((p) => p.category).filter(Boolean))].sort(collator.compare);
     const ql = q.toLocaleLowerCase('tr-TR');

@@ -83,10 +83,14 @@ export function productEligible(c, productId) {
 export function computeOrder(o, ctx) {
   const store = ctx.resolveStore(o.sender);
   const platform = (store && store.platform) || o.platform || '';
-  const lines = (o.items || []).map((it) => {
+  const lines = (o.items || []).flatMap((it) => {
     const m = ctx.match(it.name);
+    // Set / birleşik ad: her ürün ayrı satır olarak sayılır
+    if (m.parts && m.parts.length) {
+      return m.parts.map((p) => ({ raw: it.name, qty: it.qty, productId: p.productId, ignored: false, method: m.method, bundle: true, mult: p.qty, units: it.qty * p.qty, candidates: [] }));
+    }
     const mult = m.multiplier || 1;
-    return { raw: it.name, qty: it.qty, productId: m.productId, ignored: !!m.ignored, method: m.method, mult, units: it.qty * mult, candidates: m.candidates };
+    return [{ raw: it.name, qty: it.qty, productId: m.productId, ignored: !!m.ignored, method: m.method, mult, units: it.qty * mult, candidates: m.candidates }];
   });
   const counts = new Map();
   for (const l of lines) if (l.productId) counts.set(l.productId, (counts.get(l.productId) || 0) + l.units);

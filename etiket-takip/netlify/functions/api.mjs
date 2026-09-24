@@ -115,7 +115,13 @@ const SANITIZE = {
     const out = {};
     for (const [k, v] of Object.entries(obj).slice(0, 20000)) {
       const key = fold(k);
-      if (!key || !v || !(id(v.productId) || v.productId === '__ignore')) continue;
+      if (!key || !v) continue;
+      if (v.productId === '__bundle') {
+        const parts = (Array.isArray(v.parts) ? v.parts : []).filter((x) => x && id(x.productId)).map((x) => ({ productId: x.productId, qty: int(x.qty, 1, 1000, 1) })).slice(0, 20);
+        if (parts.length) out[key] = { productId: '__bundle', parts, by: str(v.by, 60), at: str(v.at, 40) };
+        continue;
+      }
+      if (!(id(v.productId) || v.productId === '__ignore')) continue;
       out[key] = { productId: v.productId, multiplier: int(v.multiplier, 1, 1000, 1), by: str(v.by, 60), at: str(v.at, 40) };
     }
     return out;

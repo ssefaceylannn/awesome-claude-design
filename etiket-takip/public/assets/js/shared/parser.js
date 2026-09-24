@@ -61,6 +61,67 @@ export function detectPlatform(text) {
   return '';
 }
 
+const BARE_QTY = /^(\d{1,4})\s*[xX×]$/;
+const INLINE_QTY = /^(\d{1,4})\s*[xX×]\s+(.+)$/;
+
+/**
+ * Ürün satırlarını ayrıştır. İki etiket düzeni desteklenir:
+ *  - Aynı hizada: "1x" ile ürün adı aynı satırda, uzun ad alt satırlara kayar (Trendyol örneği).
+ *  - Ortalanmış: adet hücrede dikey ortalanmış; ad satırları adetin üstünde/altında olabilir.
+ *    Bu durumda her ad satırı dikeyde en yakın adete bağlanır. Aksi hâlde
+ *    "1x Daily Shake" + "Ginger Shot" tek ürün gibi birleşirdi.
+ */
+function parseItems(rows, lastMetaRow, iFirstQty, warnings) {
+  const firstY = rows[iFirstQty].y;
+  const region = rows.filter((r, i) => i > lastMetaRow && (i >= iFirstQty || r.y >= firstY - 14));
+  const qtys = [];
+  const lines = [];
+  for (const r of region) {
+    const rest = [];
+    let q = null;
+    for (const it of r.items) {
+      let m;
+      if (!q && (m = it.str.match(BARE_QTY))) q = { qty: +m[1], y: it.y, x: it.x, name: '' };
+      else if (!q && (m = it.str.match(INLINE_QTY))) { q = { qty: +m[1], y: it.y, x: it.x, name: '' }; rest.push({ ...it, str: m[2] }); }
+      else rest.push(it);
+    }
+    // "1 x" iki ayrı parça olarak gelmiş olabilir
+    if (!q && rest.length >= 2 && /^\d{1,4}$/.test(rest[0].str) && /^[xX×]$/.test(rest[1].str)) {
+      q = { qty: +rest[0].str, y: rest[0].y, x: rest[0].x, name: '' };
+      rest.splice(0, 2);
+    }
+    if (q) qtys.push(q);
+    const text = clean(rest.map((it) => it.str).join(' '));
+    if (text && !CONT_RE.test(lower(text))) lines.push({ text, y: r.y, x: rest[0].x, sameRowQty: q });
+  }
+  if (!qtys.length) return [];
+  qtys.sort((a, b) => a.y - b.y);
+  lines.sort((a, b) => a.y - b.y);
+
+  const aligned = qtys.every((q) => lines.some((l) => l.sameRowQty === q)) && !lines.some((l) => l.y < qtys[0].y - 3.5);
+  if (aligned) {
+    let cur = null;
+    for (const l of lines) {
+      if (l.sameRowQty) { cur = l.sameRowQty; cur.name = l.text; continue; }
+      if (cur && l.x > cur.x + 5) cur.name = clean(cur.name + ' ' + l.text); // alt satıra kaymış ad
+    }
+  } else {
+    for (const l of lines) {
+      let best = l.sameRowQty;
+      if (!best) {
+        let bd = Infinity;
+        for (const q of qtys) {
+          const d = Math.abs(q.y - l.y) + (q.y > l.y ? 0.01 : 0); // eşitlikte üstteki adet
+          if (d < bd) { bd = d; best = q; }
+        }
+      }
+      best.name = clean(best.name + ' ' + l.text);
+    }
+  }
+  for (const q of qtys) if (!q.name) warnings.push(q.qty + 'x satırında ürün adı okunamadı');
+  return qtys.filter((q) => q.name).map((q) => ({ qty: q.qty, name: q.name }));
+}
+
 /**
  * Tek bir etiket sayfasını ayrıştır.
  * @param {Array} pdfItems pdf.js textContent.items
@@ -116,33 +177,18 @@ export function parsePage(pdfItems, pageHeight) {
 
   // --- Kargo firması ve kargo barkodu (adres ile ürünler arası) ---
   const midEnd = iFirstQty >= 0 ? iFirstQty : rows.length;
+  let lastMetaRow = afterAddr; // kargo adı / barkodu satırı: ürün bölgesi bundan sonra başlar
   for (let i = afterAddr + 1; i < midEnd; i++) {
     const r = rows[i];
     if (!res.cargo && CARGO_HINTS.some((h) => r.low.includes(h)) && !/^\d+$/.test(r.text.replace(/\s/g, ''))) {
       res.cargo = r.text;
+      lastMetaRow = i;
     }
     const code = r.items.find((it) => /^[0-9A-Z]{8,}$/.test(it.str.replace(/\s/g, '')));
-    if (code && i > afterAddr) res.cargoCode = code.str.replace(/\s/g, '');
+    if (code && i > afterAddr) { res.cargoCode = code.str.replace(/\s/g, ''); lastMetaRow = i; }
   }
 
-  if (iFirstQty >= 0) {
-    let cur = null;
-    for (let i = iFirstQty; i < rows.length; i++) {
-      const r = rows[i];
-      const m = r.text.match(QTY_RE);
-      if (m) {
-        cur = { qty: parseInt(m[1], 10), name: clean(m[2]), x: r.x };
-        res.items.push(cur);
-        continue;
-      }
-      if (CONT_RE.test(r.low)) continue; // "devamı" işareti ürün adı değildir
-      // Alt satıra kaymış uzun ürün adı
-      if (cur && r.x > cur.x + 5) cur.name = clean(cur.name + ' ' + r.text);
-    }
-    res.items = res.items.map((it) => ({ qty: it.qty, name: it.name }));
-    for (const it of res.items) if (!it.name) res.warnings.push(it.qty + 'x satırında ürün adı okunamadı');
-    res.items = res.items.filter((it) => it.name);
-  }
+  if (iFirstQty >= 0) res.items = parseItems(rows, lastMetaRow, iFirstQty, res.warnings);
 
   // --- Devam işaretleri ---
   if (CONT_RE.test(allLow)) {

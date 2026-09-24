@@ -21,6 +21,7 @@ export const DEFAULT_NOISE = [
 ];
 
 export const IGNORE = '__ignore';
+export const BUNDLE = '__bundle';
 
 const tokenHit = (kw, tok) => {
   if (kw === tok) return true;
@@ -86,46 +87,81 @@ export function createMatcher(config) {
   const byId = new Map(products.map((p) => [p.id, p]));
   const cache = new Map();
 
+  // Bir ürünün kurallarını etiket kelimelerine uygula; excluded = başka ürüne ayrılmış kelimeler
+  function scoreEntry(e, toks, excluded) {
+    if (e.excl.some((x) => toks.some((t) => tokenHit(x, t)))) return null;
+    let best = null;
+    for (const rule of e.rules) {
+      const used = new Set();
+      let score = 0;
+      const free = (j) => !used.has(j) && !(excluded && excluded.has(j));
+      const ok = rule.every((alts) => {
+        // Önce birebir kelime, yoksa ekli/yazım hatalı kelime (daha düşük puan)
+        for (const kw of alts) {
+          const i = toks.findIndex((t, j) => free(j) && t === kw);
+          if (i >= 0) { used.add(i); score += 100; return true; }
+        }
+        for (const kw of alts) {
+          const i = toks.findIndex((t, j) => free(j) && tokenHit(kw, t));
+          if (i >= 0) { used.add(i); score += 70; return true; }
+        }
+        return false;
+      });
+      if (ok && (!best || score > best.score)) best = { score, used };
+    }
+    return best;
+  }
+
   function auto(key) {
     const toks = key.split(' ').filter(Boolean);
     const cands = [];
     for (const e of entries) {
-      if (e.excl.some((x) => toks.some((t) => tokenHit(x, t)))) continue;
-      let best = null;
-      for (const rule of e.rules) {
-        const used = new Set();
-        let score = 0;
-        const ok = rule.every((alts) => {
-          // Önce birebir kelime, yoksa ekli/yazım hatalı kelime (daha düşük puan)
-          for (const kw of alts) {
-            const i = toks.findIndex((t, j) => !used.has(j) && t === kw);
-            if (i >= 0) { used.add(i); score += 100; return true; }
-          }
-          for (const kw of alts) {
-            const i = toks.findIndex((t, j) => !used.has(j) && tokenHit(kw, t));
-            if (i >= 0) { used.add(i); score += 70; return true; }
-          }
-          return false;
-        });
-        if (!ok) continue;
-        if (!best || score > best.score) best = { score, used };
-      }
-      if (best) cands.push({ id: e.p.id, name: e.p.name, score: best.score, used: best.used });
+      const b = scoreEntry(e, toks, null);
+      if (b) cands.push({ id: e.p.id, name: e.p.name, score: b.score, used: b.used, e });
     }
     cands.sort((a, b) => b.score - a.score);
     const significant = toks.filter((t) => !noise.has(t) && !/^\d+(\.\d+)?(ml|g)?$/.test(t) && !/^\d+(li|lu|x)$/.test(t));
     if (!cands.length) return { productId: null, method: 'none', confidence: 0, candidates: [] };
+    const coverage = (used) => {
+      const covered = significant.filter((t) => { const i = toks.indexOf(t); return i >= 0 && used.has(i); }).length;
+      return significant.length ? Math.min(1, covered / significant.length) : 1;
+    };
+
+    // Set / birleşik ad: "Daily Shake Ginger Shot" → Daily Shake + Ginger Shot.
+    // Ürünler farklı kelimelerle eşleşmeli; tek bir ürün adın tamamını daha iyi karşılıyorsa set sayılmaz.
+    const chosen = [cands[0]];
+    const taken = new Set(cands[0].used);
+    for (const c of cands.slice(1)) {
+      if (chosen.some((x) => x.id === c.id)) continue;
+      const b = scoreEntry(c.e, toks, taken);
+      if (!b) continue;
+      chosen.push({ ...c, score: b.score, used: b.used });
+      b.used.forEach((i) => taken.add(i));
+    }
+    if (chosen.length >= 2) {
+      // Birbirinin alt kümesi olan ürünler set sayılmaz ("Detox" ⊂ "Detox Shot")
+      const combined = chosen.reduce((sum, c) => sum + c.score, 0);
+      if (combined > cands[0].score) {
+        return {
+          productId: null,
+          parts: chosen.map((c) => ({ productId: c.id, qty: 1 })),
+          method: 'bundle',
+          confidence: coverage(taken),
+          multiplier: 1,
+          candidates: chosen.map((c) => c.id),
+        };
+      }
+    }
+
     if (cands.length > 1 && cands[0].score === cands[1].score && cands[0].id !== cands[1].id) {
       return { productId: null, method: 'ambiguous', confidence: 0, candidates: cands.slice(0, 4).map((c) => c.id) };
     }
     const top = cands[0];
-    const covered = significant.filter((t) => toks.indexOf(t) >= 0 && top.used.has(toks.indexOf(t))).length;
-    const confidence = significant.length ? Math.min(1, covered / significant.length) : 1;
     const p = byId.get(top.id);
     return {
       productId: top.id,
       method: 'auto',
-      confidence,
+      confidence: coverage(top.used),
       multiplier: p && p.packMultiplier ? detectPack(toks) : 1,
       candidates: cands.slice(0, 4).map((c) => c.id),
     };
@@ -136,7 +172,11 @@ export function createMatcher(config) {
     if (cache.has(key)) return cache.get(key);
     let res;
     const al = aliases[key];
-    if (al && (al.productId === IGNORE || byId.has(al.productId))) {
+    const parts = al && al.productId === BUNDLE && Array.isArray(al.parts) ? al.parts.filter((x) => byId.has(x.productId)) : null;
+    if (parts && parts.length) {
+      // Elle tanımlanmış set: bir etiket satırı birden çok ürün
+      res = { productId: null, parts: parts.map((x) => ({ productId: x.productId, qty: Math.max(1, +x.qty || 1) })), method: 'manual', confidence: 1, multiplier: 1, candidates: [] };
+    } else if (al && (al.productId === IGNORE || byId.has(al.productId))) {
       res = al.productId === IGNORE
         ? { productId: null, ignored: true, method: 'manual', confidence: 1, multiplier: 1, candidates: [] }
         : { productId: al.productId, method: 'manual', confidence: 1, multiplier: Math.max(1, +al.multiplier || 1), candidates: [] };

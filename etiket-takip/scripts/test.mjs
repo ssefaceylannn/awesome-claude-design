@@ -33,8 +33,33 @@ await test('Detox Shot ile Detox Mix karışmaz, ekler ayıklanır', () => {
   assert.equal(m('Detox Mix Toz 250gr').productId, 'mix');
   assert.equal(m('Organik Detox Mix Kampanyalı').productId, 'mix');
   assert.equal(m('Zencefil Shotu').productId, 'zen');
-  assert.equal(m('Detox Shot + Detox Mix Set').method, 'ambiguous');
+  const set = m('Detox Shot + Detox Mix Set');
+  assert.equal(set.method, 'bundle');
+  assert.deepEqual(set.parts.map((x) => x.productId).sort(), ['mix', 'shot']);
   assert.equal(m('Elma Sirkesi').productId, null);
+});
+
+await test('Birleşik ad iki ürüne bölünür (Daily Shake Ginger Shot)', () => {
+  const ps = [{ id: 'ds', name: 'Daily Shake' }, { id: 'gs', name: 'Ginger Shot' }, { id: 'd', name: 'Detox' }, { id: 'dsh', name: 'Detox Shot' }];
+  let m = createMatcher({ products: ps });
+  const r = m('Momordica Daily Shake Ginger Shot');
+  assert.equal(r.method, 'bundle');
+  assert.deepEqual(r.parts.map((x) => x.productId), ['ds', 'gs']);
+  assert.equal(m('Daily Shake').productId, 'ds');
+  assert.equal(m('Ginger Shot 7li').productId, 'gs');
+  assert.equal(m('Detox Shot').productId, 'dsh'); // "Detox" alt kümesi → set sayılmaz
+  // Katalogda set ürünün kendisi varsa o seçilir
+  m = createMatcher({ products: [...ps, { id: 'set', name: 'Daily Shake Ginger Shot Set' }] });
+  assert.equal(m('Daily Shake Ginger Shot Set').productId, 'set');
+  // Elle set tanımı
+  m = createMatcher({ products: ps, aliases: { [fold('DS+GS Paket')]: { productId: '__bundle', parts: [{ productId: 'ds', qty: 2 }, { productId: 'gs', qty: 1 }] } } });
+  assert.deepEqual(m('DS+GS Paket').parts, [{ productId: 'ds', qty: 2 }, { productId: 'gs', qty: 1 }]);
+  // Rapor: 3 adet set → 3 Daily Shake + 3 Ginger Shot
+  const ctx = createContext({ products: ps, stores: [], campaigns: [], aliases: {}, settings: {} });
+  const R = aggregate([{ k: 'a', date: '2026-09-24', sender: 'X', items: [{ name: 'Daily Shake Ginger Shot', qty: 3 }] }], ctx);
+  assert.equal(R.products.get('ds').labelUnits, 3);
+  assert.equal(R.products.get('gs').labelUnits, 3);
+  assert.equal(R.unmatched.size, 0);
 });
 
 await test('Gramaj/hacim farkı ayrı ürün sayılır', () => {

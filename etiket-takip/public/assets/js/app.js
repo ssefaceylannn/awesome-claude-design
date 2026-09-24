@@ -112,7 +112,7 @@ async function unmatchedBadge() {
     let n = 0;
     for (const v of Object.values(names)) {
       const m = state.ctx.match(v.raw);
-      if (!m.productId && !m.ignored) n++;
+      if (!m.productId && !m.ignored && !m.parts) n++;
     }
     setBadge('matching', n);
   } catch { /* yok */ }

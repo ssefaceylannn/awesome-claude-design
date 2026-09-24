@@ -45,6 +45,7 @@ Mağazalarda aynı ürün farklı yazılabilir: `Ultra Natura Detox Shot Zencefi
 - Ürünün **tüm** eşleşme kelimeleri etiket adında geçmelidir. `Detox Shot` = {detox, shot}, `Detox Mix` = {detox, mix}; bu yüzden ikisi asla karışmaz. `detox/detoks` gibi yazım farkları ve Türkçe ekler (`shotu`, `sirkesi`) tanınır.
 - Birden fazla ürün uyarsa en çok kelimesi tutan (en özel) ürün kazanır. Eşit durumlar **Belirsiz** olarak *Ürün Eşleştirme* ekranına düşer.
 - *Ürün Eşleştirme* ekranında yaptığınız elle atama her zaman önceliklidir. Ürün olmayan satırları (örn. “Kargo bedeli”) **Yoksay** yapabilirsiniz.
+- **Birleşik adlar / setler:** Etiket adı katalogdaki iki farklı ürünün kelimelerini ayrı ayrı içeriyorsa (ör. “Daily Shake Ginger Shot”) otomatik olarak iki ürüne bölünür. Katalogda setin kendisi tanımlıysa o seçilir. *Ürün Eşleştirme → Birden çok ürün (set)* ile bir adı istediğiniz ürün ve adetlere elle bölebilirsiniz.
 - İsteğe bağlı **paket çarpanı**: ürün ayarında açılırsa `7'li`, `x 14` gibi ifadeler adet × 7 olarak sayılır.
 - Ürün düzenleme penceresi, kural değişikliğinin hangi etiket adlarını etkileyeceğini kaydetmeden önce gösterir.
 

@@ -46,7 +46,7 @@ export default async function dashboardPage(ctx) {
     const top = productionRows(R, state.ctx).sort((a, b) => b.total - a.total).slice(0, 8);
     const maxTop = Math.max(1, ...top.map((t) => t.total));
     let unmatchedNames = 0;
-    for (const v of Object.values(names)) { const m = state.ctx.match(v.raw); if (!m.productId && !m.ignored) unmatchedNames++; }
+    for (const v of Object.values(names)) { const m = state.ctx.match(v.raw); if (!m.productId && !m.ignored && !m.parts) unmatchedNames++; }
     const unknownSenders = new Set(orders.filter((o) => !state.ctx.resolveStore(o.sender)).map((o) => o.sender)).size;
     const live = state.config.campaigns.filter((c) => campaignStatus(c).k === 'live');
     const delta = (a, b) => {
