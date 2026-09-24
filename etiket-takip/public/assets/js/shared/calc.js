@@ -30,16 +30,51 @@ export function createContext(config) {
   const products = config.products || [];
   const productsById = new Map(products.map((p) => [p.id, p]));
   // Arşivlenen kampanyalar kendi tarih aralığında geçmiş raporlarda sayılmaya devam eder
-  const campaigns = (config.campaigns || []).filter((c) => c.active);
+  const campaigns = (config.campaigns || []).filter((c) => c.active).map(normCampaign);
   return { config, match, resolveStore, products, productsById, campaigns, stores: config.stores || [] };
+}
+
+/**
+ * Kampanyayı tek biçime getir. Eski kayıtlarda olmayan alanlar, eski davranışı
+ * birebir koruyan varsayılanlarla doldurulur.
+ */
+export function normCampaign(c) {
+  const rewards = Array.isArray(c.rewards) && c.rewards.length
+    ? c.rewards.map((r) => ({ productId: r.productId || '', qty: Math.max(1, +r.qty || 1) }))
+    : [{ productId: c.rewardProductId || '', qty: Math.max(1, +c.rewardQty || 1) }];
+  return {
+    ...c,
+    storeIds: c.storeIds || [],
+    storeMode: c.storeMode === 'exclude' ? 'exclude' : 'include',
+    platforms: c.platforms || [],
+    triggerProductIds: c.triggerProductIds || [],
+    productMode: c.productMode === 'exclude' ? 'exclude' : 'include',
+    condition: c.condition || 'qty',
+    minQty: Math.max(1, +c.minQty || 1),
+    minAmount: Math.max(0, +c.minAmount || 0),
+    maxPerOrder: Math.max(0, +c.maxPerOrder || 0),
+    mode: c.mode === 'once' ? 'once' : 'every',
+    countMode: c.countMode === 'sum' ? 'sum' : 'each',
+    rewards,
+  };
 }
 
 function campaignApplies(c, o, store, platform) {
   if (c.start && o.date < c.start) return false;
   if (c.end && o.date > c.end) return false;
-  if (c.storeIds && c.storeIds.length && !(store && c.storeIds.includes(store.id))) return false;
-  if (c.platforms && c.platforms.length && !c.platforms.includes(platform)) return false;
+  if (c.storeIds.length) {
+    const inList = !!(store && c.storeIds.includes(store.id));
+    if (c.storeMode === 'exclude' ? inList : !inList) return false;
+  }
+  if (c.platforms.length && !c.platforms.includes(platform)) return false;
   return true;
+}
+
+/** Ürün kampanyaya dahil mi? Liste boşsa tüm ürünler. */
+export function productEligible(c, productId) {
+  const ids = c.triggerProductIds;
+  if (c.productMode === 'exclude') return !ids.includes(productId);
+  return !ids.length || ids.includes(productId);
 }
 
 /** Tek sipariş: satırları eşleştir, kampanyaları uygula */
@@ -57,19 +92,36 @@ export function computeOrder(o, ctx) {
   const rewards = [];
   for (const c of ctx.campaigns) {
     if (!campaignApplies(c, o, store, platform)) continue;
-    const min = Math.max(1, +c.minQty || 1);
-    const get = Math.max(1, +c.rewardQty || 1);
-    const triggers = c.triggerProductIds || [];
-    const calc = (q) => (q < min ? 0 : c.mode === 'once' ? get : Math.floor(q / min) * get);
-    if (!c.rewardProductId || c.countMode !== 'sum') {
-      for (const t of triggers) {
-        const n = calc(counts.get(t) || 0);
-        if (n) rewards.push({ campaignId: c.id, name: c.name, productId: c.rewardProductId || t, qty: n });
+    const eligible = [...counts.keys()].filter((id) => productEligible(c, id));
+    if (!eligible.length) continue;
+    const times = (q, min) => (q < min ? 0 : c.mode === 'once' ? 1 : Math.floor(q / min));
+    const out = [];
+    const give = (t, sameAs) => {
+      if (!t) return;
+      for (const r of c.rewards) {
+        const pid = r.productId || sameAs;
+        if (pid) out.push({ productId: pid, qty: r.qty * t });
       }
+    };
+    if (c.condition === 'qty' && c.countMode !== 'sum') {
+      // Her ürün ayrı sayılır; "aynı üründen" ödül o ürüne verilir
+      for (const id of eligible) give(times(counts.get(id), c.minQty), id);
     } else {
-      const n = calc(triggers.reduce((s, t) => s + (counts.get(t) || 0), 0));
-      if (n) rewards.push({ campaignId: c.id, name: c.name, productId: c.rewardProductId, qty: n });
+      let t = 0;
+      if (c.condition === 'qty') t = times(eligible.reduce((s, id) => s + counts.get(id), 0), c.minQty);
+      else if (c.condition === 'distinct') t = times(eligible.length, c.minQty);
+      else if (c.condition === 'amount') t = o.amount > 0 && c.minAmount > 0 ? times(o.amount, c.minAmount) : 0;
+      else if (c.condition === 'order') t = 1;
+      // "Aynı üründen" ödül toplu koşullarda en çok alınan ürüne verilir
+      const top = eligible.slice().sort((a, b) => counts.get(b) - counts.get(a))[0];
+      give(t, top);
     }
+    // Sipariş başına üst sınır
+    if (c.maxPerOrder) {
+      let left = c.maxPerOrder;
+      for (const r of out) { r.qty = Math.min(r.qty, left); left -= r.qty; }
+    }
+    for (const r of out) if (r.qty > 0) rewards.push({ campaignId: c.id, name: c.name, productId: r.productId, qty: r.qty });
   }
   return { order: o, store, platform, lines, rewards };
 }

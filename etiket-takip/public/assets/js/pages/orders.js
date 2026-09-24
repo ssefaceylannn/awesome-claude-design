@@ -1,5 +1,5 @@
 // Sipariş listesi: arama, filtre, detay, silme.
-import { html, mount, icon, n, trDate, trDateTime, toast, modal, confirmDialog, emptyState, storeTag, pBadge, pLabel, rangeLabel, busy } from '../core/ui.js';
+import { html, mount, icon, n, trDate, trDateTime, toast, modal, confirmDialog, emptyState, storeTag, pBadge, pLabel, rangeLabel, busy, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
 import { api, state, fetchOrders, getRange, isAdmin, can, invalidateOrders, patchCachedOrder } from '../core/api.js';
 import { aggregate, computeOrder } from '../shared/calc.js';
 import { rangePicker, storeFilters, filterLabel } from '../core/widgets.js';
@@ -21,6 +21,9 @@ export async function openOrder(o, onChange) {
         <dt>Tarih</dt><dd>${trDate(o.date, true)}</dd>
         <dt>Mağaza</dt><dd>${storeTag(c.store, o.sender)} ${pBadge(c.platform)}</dd>
         <dt>Etiketteki gönderici</dt><dd>${o.sender}</dd>
+        ${o.platformOrderNo ? html`<dt>Platform sipariş no</dt><dd>${o.platformOrderNo}${o.packageNo ? html` <span class="muted">· paket ${o.packageNo}</span>` : ''}</dd>` : ''}
+        ${o.amount ? html`<dt>Tutar</dt><dd>${n(o.amount)} TL</dd>` : ''}
+        <dt>Kaynak</dt><dd>${o.source === 'excel' ? 'Excel' : 'Etiket PDF'}</dd>
         <dt>Alıcı</dt><dd>${o.recipient || '—'} ${o.city ? html`<span class="muted">· ${o.city}</span>` : ''}</dd>
         <dt>Kargo</dt><dd>${o.cargo || '—'} ${o.cargoCode ? html`<code>${o.cargoCode}</code>` : ''}</dd>
         <dt>Etiket</dt><dd>${o.pages || 1} sayfa · ${o.file || ''}</dd>
@@ -55,6 +58,8 @@ export default async function ordersPage(ctx) {
   let filter = { storeIds: [], platforms: [] };
   let q = ctx.params.q || '';
   let status = 'all';
+  const sel = new Set();
+  const sid = (o) => `${o.date}|${o.k}`;
   let page = 0;
   let R = null;
 
@@ -92,7 +97,7 @@ export default async function ordersPage(ctx) {
       if (status === 'done' && !o.checked) return false;
       if (status === 'multi' && !(o.pages > 1)) return false;
       if (!ql) return true;
-      return [o.no, o.recipient, o.cargoCode, o.sender, c.store && c.store.name, ...o.items.map((i) => i.name)].join(' ').toLocaleLowerCase('tr-TR').includes(ql);
+      return [o.no, o.platformOrderNo, o.packageNo, o.recipient, o.cargoCode, o.sender, c.store && c.store.name, ...o.items.map((i) => i.name)].join(' ').toLocaleLowerCase('tr-TR').includes(ql);
     }).reverse();
   }
 
@@ -113,20 +118,44 @@ export default async function ordersPage(ctx) {
     ctx.setSub(`${rangeLabel(from, to)} · ${filterLabel(filter)} · ${n(list.length)} sipariş`);
     mount($('#body'), html`<div class="card">
       <div class="tabs">${[['all', 'Tümü'], ['camp', 'Kampanyalı'], ['unm', 'Eşleşmeyen ürünlü'], ['open', 'Kontrol bekleyen'], ['done', 'Kontrol edilen'], ['multi', 'Devam etiketli']].map(([k, l]) => html`<button data-s="${k}" class="${status === k ? 'on' : ''}">${l} <span class="muted">${cnt[k]}</span></button>`)}</div>
-      <div class="tw"><table class="t"><thead><tr><th>Tarih</th><th>Sipariş no</th><th>Mağaza</th><th>Alıcı</th><th>Ürünler</th><th>Kampanya</th><th>Kontrol</th></tr></thead><tbody>
+      <div class="tw"><table class="t"><thead><tr>${can('personel') ? selTh() : ''}<th>Tarih</th><th>Sipariş no</th><th>Mağaza</th><th>Alıcı</th><th>Ürünler</th><th>Kampanya</th><th>Kontrol</th></tr></thead><tbody>
       ${shown.length ? shown.map((c) => {
         const o = c.order;
-        return html`<tr class="click" data-k="${o.k}" data-d="${o.date}">
+        return html`<tr class="click" data-k="${o.k}" data-d="${o.date}">${can('personel') ? selTd(sid(o), sel) : ''}
           <td class="nowrap">${trDate(o.date)}</td><td class="nowrap"><b>${o.no}</b>${o.pages > 1 ? html` <span class="badge info">${o.pages} etiket</span>` : ''}</td>
           <td>${storeTag(c.store, o.sender)}</td><td class="small">${o.recipient}</td>
           <td class="lines small">${c.lines.map((l) => html`<div><span class="q">${l.qty}x</span> ${l.productId ? pname(l.productId) : l.ignored ? html`<span class="muted">${l.raw}</span>` : html`<span class="unm">${l.raw} ⚠</span>`}</div>`)}</td>
           <td class="small">${c.rewards.length ? c.rewards.map((r) => html`<div class="gift">+${r.qty} ${pname(r.productId)}</div>`) : html`<span class="muted">—</span>`}</td>
           <td>${o.checked ? html`<span class="badge ok">${icon('check')}</span>` : html`<span class="muted">—</span>`}</td></tr>`;
-      }) : html`<tr><td colspan="7">${emptyState('receipt', 'Sipariş bulunamadı', 'Tarih aralığını veya filtreleri değiştirin.')}</td></tr>`}
+      }) : html`<tr><td colspan="8">${emptyState('receipt', 'Sipariş bulunamadı', 'Tarih aralığını veya filtreleri değiştirin.')}</td></tr>`}
       </tbody></table></div>
       ${pages > 1 ? html`<div class="card-f row"><span class="muted small">${n(page * PAGE + 1)}–${n(Math.min(list.length, (page + 1) * PAGE))} / ${n(list.length)}</span><span class="spacer"></span>
         <button class="btn sm" data-p="-1" ${page ? '' : 'disabled'}>${icon('chevL')}Önceki</button><span class="small">${page + 1} / ${pages}</span><button class="btn sm" data-p="1" ${page < pages - 1 ? '' : 'disabled'}>Sonraki${icon('chevR')}</button></div>` : ''}
+      ${can('personel') && list.length > shown.length ? html`<div class="card-f small"><button class="btn sm ghost" id="selAll">Filtrelenen ${n(list.length)} siparişin tümünü seç</button></div>` : ''}
+      ${can('personel') ? bulkBar() : ''}
     </div>`);
+    if (!can('personel')) return;
+    const card = $('#body').firstElementChild;
+    const acts = [{ id: 'check', label: 'Kontrol edildi yap', icon: 'check' }, { id: 'uncheck', label: 'Kontrolü kaldır' }];
+    if (isAdmin()) acts.push({ id: 'del', label: 'Sil', icon: 'trash', danger: true });
+    wireBulk(card, sel, acts, async (a, ids) => {
+      const items = ids.map((x) => { const i = x.indexOf('|'); return { date: x.slice(0, i), k: x.slice(i + 1) }; });
+      if (a === 'del') {
+        if (!(await confirmDialog(`${n(items.length)} sipariş kalıcı olarak silinsin mi? Aynı etiketler tekrar yüklenirse yeni sipariş olarak sayılır.`, { danger: true, ok: `${n(items.length)} siparişi sil` }))) return false;
+        const r = await api.post('orders/delete', { items });
+        toast(`${n(r.removed)} sipariş silindi`);
+      } else {
+        for (const it of items) {
+          const r = await api.post('check', { ...it, checked: a === 'check' });
+          patchCachedOrder(r.order);
+        }
+        toast(`${n(items.length)} sipariş güncellendi`, 'ok');
+      }
+      invalidateOrders();
+      await load();
+    });
+    const sa = card.querySelector('#selAll');
+    if (sa) sa.addEventListener('click', () => { for (const c of list) sel.add(sid(c.order)); render(); });
   }
 
   $('#body').addEventListener('click', (e) => {
@@ -135,7 +164,7 @@ export default async function ordersPage(ctx) {
     const p = e.target.closest('[data-p]');
     if (p) { page += +p.dataset.p; return render(); }
     const tr = e.target.closest('tr[data-k]');
-    if (tr) {
+    if (tr && !e.target.closest('.sel')) {
       const c = R.computed.find((x) => x.order.k === tr.dataset.k && x.order.date === tr.dataset.d);
       if (c) openOrder(c.order, load);
     }

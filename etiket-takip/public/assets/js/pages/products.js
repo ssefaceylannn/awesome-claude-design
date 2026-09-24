@@ -1,5 +1,5 @@
 // Ürün kataloğu + üretim listesi sırası + eşleştirme kuralları.
-import { html, mount, icon, modal, confirmDialog, toast, uid, n, esc, emptyState, sortable, collator } from '../core/ui.js';
+import { html, mount, icon, modal, confirmDialog, toast, uid, n, esc, emptyState, sortable, collator, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
 import { api, state, isAdmin, saveSection } from '../core/api.js';
 import { createMatcher, autoKeywords } from '../shared/matcher.js';
 
@@ -133,6 +133,7 @@ export default async function productsPage(ctx) {
   const names = await getLabelNames().catch(() => []);
   let q = '';
   let cat = '';
+  const sel = new Set();
 
   function render() {
     const all = state.config.products;
@@ -148,16 +149,17 @@ export default async function productsPage(ctx) {
     ctx.setSub(`${all.length} ürün · ${all.filter((p) => p.active !== false).length} aktif`);
     mount(ctx.el, html`<div class="stack">
       <div class="callout info">${icon('info')}<div class="c"><b>Bu liste = üretim listesi sırası</b>Excel'deki “Ürün | Gönderilecek Adet” tablosu buradaki sırayla oluşur. ${admin ? 'Satırları tutamaçtan sürükleyin veya sıra numarasını değiştirin; sıra anında kaydedilir.' : ''}</div></div>
-      <div class="card">
+      <div class="card" id="pCard">
         <div class="card-h">
           <div class="search" style="width:280px;max-width:100%">${icon('search')}<input class="input sm" id="q" placeholder="Ürün, SKU, kelime ara…" value="${q}"></div>
           <select class="input sm" id="cat" style="width:auto"><option value="">Tüm kategoriler</option>${cats.map((c) => html`<option ${c === cat ? 'selected' : ''}>${c}</option>`)}</select>
           <span class="spacer"></span>${!canDrag && admin ? html`<span class="muted xs">Sıralamak için aramayı/filtreyi temizleyin</span>` : ''}
         </div>
-        <div class="tw"><table class="t"><thead><tr>${canDrag ? html`<th></th>` : ''}<th>Sıra</th><th>Ürün</th><th>Kategori</th><th>Eşleşme kuralı</th><th class="num">Etiket adı</th><th>Durum</th><th></th></tr></thead>
+        <div class="tw"><table class="t"><thead><tr>${admin ? selTh() : ''}${canDrag ? html`<th></th>` : ''}<th>Sıra</th><th>Ürün</th><th>Kategori</th><th>Eşleşme kuralı</th><th class="num">Etiket adı</th><th>Durum</th><th></th></tr></thead>
         <tbody id="rows">${filtered.length ? filtered.map((p) => {
           const pos = all.indexOf(p) + 1;
           return html`<tr data-id="${p.id}">
+            ${admin ? selTd(p.id, sel) : ''}
             ${canDrag ? html`<td class="grip" title="Sürükle">${icon('grip')}</td>` : ''}
             <td class="pos">${canDrag ? html`<input class="input sm" type="number" min="1" max="${all.length}" value="${pos}" data-pos="${p.id}">` : html`<span class="muted">${pos}</span>`}</td>
             <td><b>${p.name}</b>${p.sku ? html`<div class="muted xs">${p.sku}</div>` : ''}</td>
@@ -167,13 +169,47 @@ export default async function productsPage(ctx) {
             <td>${p.active !== false ? html`<span class="badge ok"><span class="dot"></span>Aktif</span>` : html`<span class="badge">Pasif</span>`}</td>
             <td class="num nowrap">${admin ? html`<button class="btn sm ghost icon" data-edit="${p.id}" title="Düzenle">${icon('edit')}</button><button class="btn sm ghost icon danger" data-del="${p.id}" title="Sil">${icon('trash')}</button>` : ''}</td>
           </tr>`;
-        }) : html`<tr><td colspan="8">${emptyState('box', all.length ? 'Sonuç yok' : 'Katalog boş', admin && !all.length ? html`“Ürün ekle” veya “Toplu ekle” ile ürünlerinizi <b>üretim listesinde görmek istediğiniz sırayla</b> girin.` : '')}</td></tr>`}</tbody></table></div>
+        }) : html`<tr><td colspan="9">${emptyState('box', all.length ? 'Sonuç yok' : 'Katalog boş', admin && !all.length ? html`“Ürün ekle” veya “Toplu ekle” ile ürünlerinizi <b>üretim listesinde görmek istediğiniz sırayla</b> girin.` : '')}</td></tr>`}</tbody></table></div>
+        ${admin ? bulkBar() : ''}
       </div>
     </div>`);
+    if (admin) wireBulk(ctx.el.querySelector('#pCard'), sel, [
+      { id: 'cat', label: 'Kategori ata' },
+      { id: 'on', label: 'Aktif yap' },
+      { id: 'off', label: 'Pasif yap' },
+      { id: 'del', label: 'Sil', icon: 'trash', danger: true },
+    ], bulkAction);
     const qi = ctx.el.querySelector('#q');
     qi.addEventListener('input', () => { q = qi.value; const pos = qi.selectionStart; render(); const n2 = ctx.el.querySelector('#q'); n2.focus(); n2.setSelectionRange(pos, pos); });
     ctx.el.querySelector('#cat').addEventListener('change', (e) => { cat = e.target.value; render(); });
     if (canDrag) sortable(ctx.el.querySelector('#rows'), (ids) => saveOrder(ids));
+  }
+
+  const usedInCampaigns = (ids) => state.config.campaigns.filter((c) => (c.triggerProductIds || []).some((x) => ids.includes(x)) || ids.includes(c.rewardProductId) || (c.rewards || []).some((r) => ids.includes(r.productId)));
+
+  async function bulkAction(a, ids) {
+    const set = new Set(ids);
+    const list = state.config.products;
+    if (a === 'del') {
+      const used = usedInCampaigns(ids);
+      if (!(await confirmDialog(html`<b>${ids.length} ürün</b> silinsin mi?<br><br>Bu ürünlere eşleşen etiket satırları “eşleşmeyen” olur ve geçmiş raporlarda görünmez.${used.length ? html`<br><br><span class="unm">${used.length} kampanyada kullanılıyor: ${used.slice(0, 5).map((c) => c.name).join(', ')}${used.length > 5 ? '…' : ''}</span>` : ''}`, { danger: true, ok: `${ids.length} ürünü sil` }))) return false;
+      await saveSection('products', list.filter((p) => !set.has(p.id)), `${ids.length} ürün toplu silindi`);
+    } else if (a === 'on' || a === 'off') {
+      await saveSection('products', list.map((p) => (set.has(p.id) ? { ...p, active: a === 'on' } : p)), `${ids.length} ürün ${a === 'on' ? 'aktif' : 'pasif'} yapıldı`);
+    } else if (a === 'cat') {
+      let catName = null;
+      const cats = [...new Set(list.map((p) => p.category).filter(Boolean))];
+      const ok = await modal({
+        title: `${ids.length} ürüne kategori ata`, size: 'sm',
+        body: html`<label class="f">Kategori<input class="input" name="c" list="bulkCats" placeholder="Boş = kategoriyi kaldır"><datalist id="bulkCats">${cats.map((c) => html`<option value="${c}">`)}</datalist></label>`,
+        actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Uygula', value: 'ok', variant: 'primary' }],
+        onSubmit: (_, d) => { catName = d.querySelector('[name=c]').value.trim(); },
+      });
+      if (ok !== 'ok') return false;
+      await saveSection('products', list.map((p) => (set.has(p.id) ? { ...p, category: catName } : p)), `${ids.length} ürüne kategori: ${catName || '(yok)'}`);
+    }
+    toast('Güncellendi', 'ok');
+    render();
   }
 
   async function saveOrder(ids) {
@@ -201,7 +237,7 @@ export default async function productsPage(ctx) {
     const dl = e.target.closest('[data-del]');
     if (dl) {
       const p = state.config.products.find((x) => x.id === dl.dataset.del);
-      const usedIn = state.config.campaigns.filter((c) => (c.triggerProductIds || []).includes(p.id) || c.rewardProductId === p.id);
+      const usedIn = usedInCampaigns([p.id]);
       if (!(await confirmDialog(html`<b>${p.name}</b> silinsin mi?<br><br>Bu ürüne eşleşen etiket satırları “eşleşmeyen” olur ve geçmiş raporlarda görünmez.${usedIn.length ? html`<br><br><span class="unm">${usedIn.length} kampanyada kullanılıyor: ${usedIn.map((c) => c.name).join(', ')}</span>` : ''}<br><br>Geçici olarak devre dışı bırakmak için “Pasif” yapabilirsiniz.`, { danger: true, ok: 'Sil' }))) return;
       await saveSection('products', state.config.products.filter((x) => x.id !== p.id), `silindi: ${p.name}`);
       toast('Ürün silindi');

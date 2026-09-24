@@ -277,3 +277,59 @@ export function loadScript(src) {
     document.head.appendChild(s);
   });
 }
+
+// ------------------------------------------------------------------ toplu seçim
+/** Tablo başlığı için "tümünü seç" kutusu */
+export const selTh = () => html`<th class="sel"><input type="checkbox" data-all aria-label="Tümünü seç"></th>`;
+/** Satır seçim kutusu */
+export const selTd = (id, set) => html`<td class="sel"><input type="checkbox" data-sel="${id}" ${set.has(id) ? raw('checked') : ''} aria-label="Seç"></td>`;
+export const bulkBar = () => html`<div class="bulkbar hidden"></div>`;
+
+/**
+ * Seçim kutularını ve toplu işlem çubuğunu bağla. Her yeniden çizimden sonra çağrılır.
+ * root: tabloyu ve .bulkbar'ı içeren (yeniden oluşturulan) öğe
+ * set: sayfa boyunca korunan seçili kimlikler
+ * actions: [{ id, label, icon, danger }]
+ * onAction(actionId, ids) → Promise; bitince seçim temizlenir
+ */
+export function wireBulk(root, set, actions, onAction) {
+  const bar = root.querySelector('.bulkbar');
+  const boxes = () => [...root.querySelectorAll('[data-sel]')];
+  const draw = () => {
+    for (const all of root.querySelectorAll('[data-all]')) {
+      const visible = [...(all.closest('table') || root).querySelectorAll('[data-sel]')];
+      const n = visible.filter((b) => set.has(b.dataset.sel)).length;
+      all.checked = visible.length > 0 && n === visible.length;
+      all.indeterminate = n > 0 && n < visible.length;
+    }
+    if (!bar) return;
+    bar.classList.toggle('hidden', !set.size);
+    mount(bar, html`<b>${set.size} seçili</b><span class="spacer"></span>
+      ${actions.map((a) => html`<button type="button" class="btn sm ${a.danger ? 'danger solid' : ''}" data-bulk="${a.id}">${a.icon ? icon(a.icon) : ''}${a.label}</button>`)}
+      <button type="button" class="btn sm ghost" data-bulk="__clear">Seçimi temizle</button>`);
+  };
+  root.addEventListener('change', (e) => {
+    if (e.target.matches('[data-all]')) {
+      for (const b of (e.target.closest('table') || root).querySelectorAll('[data-sel]')) { b.checked = e.target.checked; if (e.target.checked) set.add(b.dataset.sel); else set.delete(b.dataset.sel); }
+      return draw();
+    }
+    if (e.target.matches('[data-sel]')) {
+      if (e.target.checked) set.add(e.target.dataset.sel); else set.delete(e.target.dataset.sel);
+      draw();
+    }
+  });
+  bar && bar.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-bulk]');
+    if (!b) return;
+    if (b.dataset.bulk === '__clear') { set.clear(); boxes().forEach((x) => { x.checked = false; }); return draw(); }
+    const ids = [...set];
+    b.disabled = true;
+    try {
+      const done = await onAction(b.dataset.bulk, ids);
+      if (done !== false) set.clear();
+    } catch (err) { toast(err.message || String(err), 'err'); }
+    b.disabled = false;
+    draw();
+  });
+  draw();
+}

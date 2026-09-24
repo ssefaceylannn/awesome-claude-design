@@ -1,7 +1,8 @@
 // Etiket yükleme: PDF oku → önizle (mükerrer / devam / eşleşme / kampanya) → kaydet.
-import { html, mount, icon, toast, n, trDate, trDateTime, today, confirmDialog, busy, emptyState, storeTag, rangeLabel } from '../core/ui.js';
+import { html, mount, icon, toast, n, trDate, trDateTime, today, confirmDialog, busy, emptyState, storeTag, rangeLabel, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
 import { api, state, isAdmin, invalidateOrders, setRange } from '../core/api.js';
 import { readLabels } from '../core/labels.js';
+import { readSheets } from '../core/sheets.js';
 import { computeOrder } from '../shared/calc.js';
 import { storeForm } from './stores.js';
 import { refreshBadges } from '../app.js';
@@ -23,17 +24,17 @@ export default async function uploadPage(ctx) {
   mount(ctx.el, html`<div class="stack">
     <div class="card"><div class="card-b stack">
       <label class="drop" id="drop">
-        <input type="file" id="file" accept="application/pdf,.pdf" multiple hidden>
+        <input type="file" id="file" accept="application/pdf,.pdf,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden>
         <div class="ic">${icon('upload')}</div>
-        <b>Etiket PDF'lerini buraya sürükleyin</b>
-        <div class="muted">veya tıklayıp seçin · birden fazla dosya ve mağaza aynı anda yüklenebilir</div>
+        <b>Etiket PDF'lerini ve Excel sipariş listelerini buraya sürükleyin</b>
+        <div class="muted">veya tıklayıp seçin · dosya sayısı sınırı yok (100–200+ PDF, birden çok Excel) · PDF ve Excel birlikte atılabilir</div>
       </label>
       <div class="row wrap bottom">
         <label class="f">Sipariş tarihi<select class="input" id="dateMode" style="width:auto">
-          <option value="file">Dosya adındaki tarih (yoksa bugün)</option><option value="today">Bugün</option><option value="manual">Seçeceğim tarih</option></select></label>
+          <option value="file">Dosya adındaki tarih (yoksa bugün)</option><option value="today">Bugün</option><option value="manual">Seçeceğim tarih</option><option value="platform">Excel: siparişin platform tarihi</option></select></label>
         <label class="f" id="mdWrap"><span>Tarih</span><input type="date" class="input" id="md" value="${manualDate}"></label>
         <span class="spacer"></span>
-        <span class="muted small">PDF'ler bu bilgisayarda okunur; sunucuya yalnızca sipariş bilgileri gönderilir.</span>
+        <span class="muted small">Dosyalar bu bilgisayarda okunur; sunucuya yalnızca sipariş bilgileri gönderilir (telefon ve adres gönderilmez).</span>
       </div>
       <div id="prog" class="hidden"><div class="row small" style="margin-bottom:6px"><span id="progText">Okunuyor…</span></div><div class="progress"><i id="progBar" style="width:0"></i></div></div>
     </div></div>
@@ -49,23 +50,53 @@ export default async function uploadPage(ctx) {
   $('#md').addEventListener('change', (e) => { manualDate = e.target.value || today(); });
   const drop = $('#drop');
   $('#file').addEventListener('change', (e) => { handle([...e.target.files]); e.target.value = ''; });
+  const isPdf = (f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
+  const isXlsx = (f) => /\.xlsx$/i.test(f.name);
   ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
   ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
   drop.addEventListener('drop', (e) => handle([...e.dataTransfer.files]));
 
   async function handle(files) {
     if (!files || !files.length) return;
+    const pdfs = files.filter(isPdf), sheets = files.filter(isXlsx);
+    const other = files.length - pdfs.length - sheets.length;
+    if (!pdfs.length && !sheets.length) return toast('PDF veya .xlsx dosyası seçilmedi', 'err');
     const prog = $('#prog');
     prog.classList.remove('hidden');
+    const total = pdfs.length + sheets.length;
+    const progress = (d) => { $('#progText').textContent = `${d}/${total} dosya okundu`; $('#progBar').style.width = `${(d / total) * 100}%`; };
     try {
       const md = dateMode === 'manual' ? manualDate : dateMode === 'today' ? today() : '';
-      const read = await readLabels(files, {
-        manualDate: md,
-        onProgress: (d, t) => { $('#progText').textContent = `${d}/${t} dosya okundu`; $('#progBar').style.width = `${(d / t) * 100}%`; },
+      const read = { orders: [], log: [], pages: 0, files: [], rows: 0 };
+      if (pdfs.length) {
+        const r = await readLabels(pdfs, { manualDate: md, onProgress: (d) => progress(d) });
+        Object.assign(read, { orders: r.orders, log: r.log, pages: r.pages, files: r.files });
+      }
+      if (sheets.length) {
+        const r = await readSheets(sheets, { dateMode, manualDate, onProgress: (d) => progress(pdfs.length + d) });
+        read.orders.push(...r.orders);
+        read.log.push(...r.log);
+        read.files.push(...r.files);
+        read.rows = r.rows;
+      }
+      if (other) read.log.push({ type: 'warn', msg: `${other} dosya PDF/.xlsx olmadığı için atlandı.` });
+      // Aynı paket hem PDF hem Excel'de varsa (kargo takip no) bir kez say
+      const seenNo = new Set();
+      read.orders = read.orders.filter((o) => {
+        if (!/^\d{12,}$/.test(o.orderNo || '')) return true;
+        if (seenNo.has(o.orderNo)) { read.log.push({ type: 'dup', msg: `${o.orderNo}: aynı yüklemede hem PDF hem Excel'de var, bir kez sayıldı.` }); return false; }
+        seenNo.add(o.orderNo);
+        return true;
       });
-      if (!read.files.length) throw new Error('PDF dosyası seçilmedi');
-      $('#progText').textContent = 'Kayıtlarla karşılaştırılıyor…';
-      const { results } = await api.post('import', { orders: read.orders, dryRun: true });
+      if (!read.orders.length) throw new Error('Dosyalarda sipariş bulunamadı' + (read.log.length ? ': ' + read.log[0].msg : ''));
+      // Kayıtlarla karşılaştır (büyük yüklemeler parça parça)
+      const results = [];
+      const CH = 1000;
+      for (let k = 0; k < read.orders.length; k += CH) {
+        $('#progText').textContent = `Kayıtlarla karşılaştırılıyor… ${Math.min(k + CH, read.orders.length)}/${read.orders.length}`;
+        const r = await api.post('import', { orders: read.orders.slice(k, k + CH), dryRun: true });
+        results.push(...r.results.map((x) => ({ ...x, i: x.i + k })));
+      }
       pending = { read, results };
       statusFilter = 'all';
       renderPreview();
@@ -100,7 +131,7 @@ export default async function uploadPage(ctx) {
     const canSave = newRows.length || count('merge');
 
     mount(el, html`<div class="card">
-      <div class="card-h"><h2>Önizleme</h2><span class="sub">${read.files.length} dosya · ${read.pages} etiket sayfası · ${dates.length ? rangeLabel(dates[0], dates[dates.length - 1]) : ''}</span>
+      <div class="card-h"><h2>Önizleme</h2><span class="sub">${read.files.length} dosya · ${read.pages ? `${read.pages} etiket sayfası · ` : ''}${read.rows ? `${read.rows} Excel satırı · ` : ''}${dates.length ? rangeLabel(dates[0], dates[dates.length - 1]) : ''}</span>
         <span class="spacer"></span>
         <button class="btn" id="cancel">Vazgeç</button>
         <button class="btn primary" id="save" ${canSave && state.me.role !== 'izleyici' ? '' : 'disabled'}>${icon('check')}Kaydet · ${n(newRows.length)} yeni sipariş</button></div>
@@ -122,7 +153,7 @@ export default async function uploadPage(ctx) {
       </div>
       <div class="tabs">${[['all', 'Tümü', rows.length], ['new', 'Yeni', newRows.length], ['dup', 'Mükerrer', count('dup')], ['merge', 'Devam', count('merge')], ['error', 'Hatalı', count('error')]].filter(([k, , c]) => k === 'all' || c).map(([k, l, c]) => html`<button data-sf="${k}" class="${statusFilter === k ? 'on' : ''}">${l} <span class="muted">${c}</span></button>`)}</div>
       <div class="tw" style="max-height:560px"><table class="t"><thead><tr><th>Durum</th><th>Tarih</th><th>Sipariş no</th><th>Mağaza</th><th>Etiketteki ürün → katalog</th><th>Kampanya</th><th>Not</th></tr></thead><tbody>
-      ${list.map(({ r, o, c }) => html`<tr>
+      ${list.slice(0, 400).map(({ r, o, c }) => html`<tr>
         <td>${ST[r.status]}</td><td class="nowrap">${trDate(o.date)}</td>
         <td class="nowrap"><b>${o.orderNo || '—'}</b>${o.pages > 1 ? html` <span class="badge info">${o.pages} etiket</span>` : ''}</td>
         <td>${storeTag(c.store, o.sender)}</td>
@@ -131,6 +162,7 @@ export default async function uploadPage(ctx) {
         <td class="small muted">${r.note || (o.warnings || []).join(', ')}</td>
       </tr>`)}
       </tbody></table></div>
+      ${list.length > 400 ? html`<div class="card-f small muted">İlk 400 satır gösteriliyor (toplam ${n(list.length)}). Kaydet tüm siparişleri kaydeder.</div>` : ''}
     </div>`);
 
     el.querySelector('#cancel').addEventListener('click', () => { pending = null; renderPreview(); });
@@ -144,7 +176,16 @@ export default async function uploadPage(ctx) {
     busy(btn, true, 'Kaydediliyor…');
     try {
       const { read } = pending;
-      const r = await api.post('import', { orders: read.orders, files: read.files, pages: read.pages });
+      // Parça parça gönder; hepsi tek yükleme kaydında toplanır
+      const CH = 400;
+      const r = { results: [], counts: { new: 0, dup: 0, merge: 0, error: 0 }, batchId: null };
+      for (let k = 0; k < read.orders.length; k += CH) {
+        btn.lastChild.textContent = `Kaydediliyor… ${Math.min(k + CH, read.orders.length)}/${read.orders.length}`;
+        const part = await api.post('import', { orders: read.orders.slice(k, k + CH), files: read.files, pages: read.pages, batchId: r.batchId });
+        r.batchId = part.batchId;
+        r.results.push(...part.results.map((x) => ({ ...x, i: x.i + k })));
+        for (const key of Object.keys(r.counts)) r.counts[key] += part.counts[key] || 0;
+      }
       invalidateOrders();
       const dates = [...new Set(r.results.filter((x) => x.status === 'new').map((x) => read.orders[x.i].date))].sort();
       pending = null;
@@ -163,31 +204,29 @@ export default async function uploadPage(ctx) {
     }
   }
 
+  const hsel = new Set();
   async function loadHistory() {
     try {
-      const { batches } = await api.get('batches?limit=40');
-      mount($('#history'), batches.length ? html`<div class="tw"><table class="t"><thead><tr><th>Zaman</th><th>Kullanıcı</th><th>Dosyalar</th><th>Sipariş tarihi</th><th class="num">Yeni</th><th class="num">Mükerrer</th><th class="num">Devam</th><th class="num">Adet</th><th></th></tr></thead><tbody>
-        ${batches.map((b) => html`<tr><td class="nowrap">${trDateTime(b.at)}</td><td>${b.by}</td>
+      const { batches } = await api.get('batches?limit=100');
+      const box = $('#history');
+      mount(box, batches.length ? html`<div class="tw"><table class="t"><thead><tr>${admin ? selTh() : ''}<th>Zaman</th><th>Kullanıcı</th><th>Dosyalar</th><th>Sipariş tarihi</th><th class="num">Yeni</th><th class="num">Mükerrer</th><th class="num">Devam</th><th class="num">Adet</th><th></th></tr></thead><tbody>
+        ${batches.map((b) => html`<tr>${admin ? (b.orderCount ? selTd(b.id, hsel) : html`<td class="sel"></td>`) : ''}<td class="nowrap">${trDateTime(b.at)}</td><td>${b.by}</td>
           <td class="small">${b.files.slice(0, 3).map((f) => html`<div>${f}</div>`)}${b.files.length > 3 ? html`<div class="muted">+${b.files.length - 3} dosya</div>` : ''}</td>
           <td class="small nowrap">${b.dates.length ? rangeLabel(b.dates[0], b.dates[b.dates.length - 1]) : '—'}</td>
           <td class="num"><b>${n(b.counts.new)}</b></td><td class="num">${n(b.counts.dup)}</td><td class="num">${n(b.counts.merge)}</td><td class="num">${n(b.units)}</td>
           <td class="num nowrap">${b.dates.length ? html`<button class="btn sm ghost" data-open="${b.dates[0]}|${b.dates[b.dates.length - 1]}">Rapor</button>` : ''}${admin && b.orderCount ? html`<button class="btn sm ghost icon danger" data-undo="${b.id}" data-n="${b.orderCount}" title="Bu yüklemeyi geri al">${icon('trash')}</button>` : ''}</td></tr>`)}
-        </tbody></table></div>` : emptyState('history', 'Henüz yükleme yapılmadı', ''));
+        </tbody></table></div>${admin ? bulkBar() : ''}` : emptyState('history', 'Henüz yükleme yapılmadı', ''));
+      if (admin && batches.length) {
+        wireBulk(box, hsel, [{ id: 'del', label: 'Seçili yüklemeleri sil', icon: 'trash', danger: true }], async (a, ids) => {
+          const cnt = batches.filter((b) => ids.includes(b.id)).reduce((s2, b) => s2 + b.orderCount, 0);
+          if (!(await confirmDialog(`${ids.length} yükleme ve içindeki ${n(cnt)} sipariş silinsin mi? Bu işlem geri alınamaz.`, { danger: true, ok: 'Sil' }))) return false;
+          const r = await api.post('batches/delete', { ids });
+          invalidateOrders();
+          toast(`${n(r.removed)} sipariş silindi`);
+          loadHistory();
+        });
+      }
     } catch (e) { mount($('#history'), html`<div class="card-b unm">${e.message}</div>`); }
   }
-  $('#history').addEventListener('click', async (e) => {
-    const o = e.target.closest('[data-open]');
-    if (o) { const [f, t] = o.dataset.open.split('|'); setRange(f, t); return ctx.navigate('production'); }
-    const u = e.target.closest('[data-undo]');
-    if (u) {
-      if (!(await confirmDialog(`Bu yüklemedeki ${u.dataset.n} sipariş silinsin mi? Bu işlem geri alınamaz. (Önceki siparişlere eklenmiş devam etiketleri geri alınmaz.)`, { danger: true, ok: 'Yüklemeyi sil' }))) return;
-      try {
-        const r = await api.del('batch?id=' + encodeURIComponent(u.dataset.undo));
-        invalidateOrders();
-        toast(`${r.removed} sipariş silindi`);
-        loadHistory();
-      } catch (err) { toast(err.message, 'err'); }
-    }
-  });
   loadHistory();
 }

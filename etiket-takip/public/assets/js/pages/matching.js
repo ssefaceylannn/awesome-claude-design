@@ -1,5 +1,5 @@
 // Ürün eşleştirme merkezi: etiketlerde görülen tüm ürün adları ve katalogdaki karşılıkları.
-import { html, mount, icon, toast, n, trDate, emptyState, collator } from '../core/ui.js';
+import { html, mount, icon, toast, n, trDate, emptyState, collator, modal, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
 import { api, state, isAdmin, saveSection } from '../core/api.js';
 import { fold } from '../shared/text.js';
 import { IGNORE } from '../shared/matcher.js';
@@ -21,6 +21,7 @@ export default async function matchingPage(ctx) {
   let names = Object.entries((await api.get('labelnames')).names || {}).map(([key, v]) => ({ key, ...v }));
   let filter = ctx.params.f || null;
   let q = '';
+  const sel = new Set();
 
   mount(ctx.actions, html`<a class="btn" href="#/products">${icon('box')}Ürün kataloğu</a>`);
 
@@ -53,13 +54,13 @@ export default async function matchingPage(ctx) {
         <div class="kpi"><div class="l">Elle atanan</div><div class="v">${n(count.manual)}</div><div class="s">${n(count.ignored)} yoksayılan</div></div>
         <div class="kpi ${count.todo + count.ambiguous ? '' : 'hl'}"><div class="l">Bekleyen</div><div class="v">${n(count.todo + count.ambiguous)}</div><div class="s">${n(unresolvedQty)} adet üretim listesine girmiyor</div></div>
       </div>
-      <div class="card">
+      <div class="card" id="mCard">
         <div class="card-h" style="gap:12px">
           <div class="seg">${FILTERS.map(([k, l]) => html`<button data-f="${k}" class="${filter === k ? 'on' : ''}">${l} <span class="muted">${count[k]}</span></button>`)}</div>
           <span class="spacer"></span>
           <div class="search" style="width:260px;max-width:100%">${icon('search')}<input class="input sm" id="q" placeholder="Ad veya ürün ara…" value="${q}"></div>
         </div>
-        <div class="tw"><table class="t"><thead><tr><th>Etiketteki ürün adı</th><th class="num">Toplam adet</th><th>Son görülme</th><th>Durum</th><th style="min-width:260px">Katalogdaki ürün</th><th>Çarpan</th><th></th></tr></thead><tbody>
+        <div class="tw"><table class="t"><thead><tr>${admin ? selTh() : ''}<th>Etiketteki ürün adı</th><th class="num">Toplam adet</th><th>Son görülme</th><th>Durum</th><th style="min-width:260px">Katalogdaki ürün</th><th>Çarpan</th><th></th></tr></thead><tbody>
         ${list.length ? list.slice(0, 500).map((x) => {
           const r = x.r;
           const al = state.config.aliases[x.key];
@@ -73,6 +74,7 @@ export default async function matchingPage(ctx) {
           }[x.cls];
           const autoRes = al ? null : r;
           return html`<tr>
+            ${admin ? selTd(x.key, sel) : ''}
             <td><b>${x.raw}</b>${x.cls === 'ambiguous' ? html`<div class="xs unm">Adaylar: ${r.candidates.map(pname).join(' · ')}</div>` : ''}</td>
             <td class="num">${n(x.qty)}</td>
             <td class="small nowrap">${trDate(x.lastSeen)}</td>
@@ -86,15 +88,45 @@ export default async function matchingPage(ctx) {
             <td>${admin && al && al.productId !== IGNORE ? html`<input class="input sm" type="number" min="1" max="1000" value="${al.multiplier || 1}" data-mult="${x.key}" style="width:70px" title="Etiketteki 1 adet kaç ürün sayılsın">` : r.multiplier > 1 ? html`×${r.multiplier}` : html`<span class="muted">×1</span>`}</td>
             <td class="num">${admin && !r.productId && !r.ignored ? html`<button class="btn sm" data-newp="${x.raw}" title="Bu adla katalogda yeni ürün oluştur">${icon('plus')}Ürün</button>` : ''}</td>
           </tr>`;
-        }) : html`<tr><td colspan="7">${emptyState('link', filter === 'todo' ? 'Bekleyen eşleştirme yok' : 'Kayıt yok', filter === 'todo' ? 'Tüm etiket adları katalogdaki bir ürünle eşleşiyor.' : '')}</td></tr>`}
+        }) : html`<tr><td colspan="8">${emptyState('link', filter === 'todo' ? 'Bekleyen eşleştirme yok' : 'Kayıt yok', filter === 'todo' ? 'Tüm etiket adları katalogdaki bir ürünle eşleşiyor.' : '')}</td></tr>`}
         </tbody></table></div>
         ${list.length > 500 ? html`<div class="card-f muted small">İlk 500 kayıt gösteriliyor, aramayı daraltın.</div>` : ''}
+        ${admin ? bulkBar() : ''}
       </div>
       <div class="callout info">${icon('info')}<div class="c"><b>Otomatik eşleştirme nasıl çalışır?</b>
         Etiket adındaki “Ultra Natura”, “Hediyeli”, gramaj yazımı gibi ekler ayıklanır; ürünün eşleşme kelimelerinin <b>hepsi</b> geçiyorsa eşleşir. Birden çok ürün uyarsa daha fazla kelimesi tutan kazanır (“Detox Shot” ≠ “Detox Mix”). Eşit puanlı durumlar “Belirsiz” olarak buraya düşer. Elle yaptığınız atama her zaman önceliklidir ve geçmiş raporlar da hemen güncellenir.</div></div>
     </div>`);
+    if (admin) wireBulk(ctx.el.querySelector('#mCard'), sel, [
+      { id: 'assign', label: 'Ürüne ata', icon: 'link' },
+      { id: 'ignore', label: 'Yoksay' },
+      { id: 'auto', label: 'Otomatiğe döndür' },
+    ], bulkAssign);
     const qi = ctx.el.querySelector('#q');
     qi.addEventListener('input', () => { q = qi.value; const pos = qi.selectionStart; render(); const q2 = ctx.el.querySelector('#q'); q2.focus(); q2.setSelectionRange(pos, pos); });
+  }
+
+  async function bulkAssign(a, keys) {
+    let productId = a === 'ignore' ? IGNORE : '';
+    if (a === 'assign') {
+      const products = state.config.products.filter((p) => p.active !== false);
+      const ok = await modal({
+        title: `${keys.length} etiket adını ürüne ata`, size: 'sm',
+        body: html`<label class="f">Katalogdaki ürün<select class="input" name="p">${products.map((p) => html`<option value="${p.id}">${p.name}</option>`)}</select></label>`,
+        actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Ata', value: 'ok', variant: 'primary' }],
+        onSubmit: (_, d) => { productId = d.querySelector('[name=p]').value; },
+      });
+      if (ok !== 'ok' || !productId) return false;
+    }
+    const aliases = { ...state.config.aliases };
+    for (const k of keys) {
+      if (!productId) delete aliases[k];
+      else aliases[k] = { productId, multiplier: (aliases[k] && aliases[k].multiplier) || 1, by: state.me.username, at: new Date().toISOString() };
+    }
+    const pn = productId === IGNORE ? 'yoksay' : productId ? (state.ctx.productsById.get(productId) || {}).name : 'otomatik';
+    await saveSection('aliases', aliases, `${keys.length} etiket adı → ${pn}`);
+    refreshBadges();
+    toast('Eşleştirmeler kaydedildi', 'ok');
+    render();
   }
 
   async function setAlias(key, productId, multiplier) {

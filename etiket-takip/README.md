@@ -32,8 +32,8 @@ Kullanıcı eklemek, şifre veya rol değiştirmek için `USERS` değişkenini d
 
 1. **Mağazalar:** 6 Trendyol, 3 ikas ve 1 Shopify mağazanızı ekleyin. “Etiketteki gönderici adları”, etiketin *Gönderici* alanında yazan addır (örn. `Ultra Natura Trendyol`). İlk etiket yüklemesinden sonra tanımsız göndericiler burada listelenir; tek tıkla mağaza yapabilir veya mevcut mağazaya bağlayabilirsiniz.
 2. **Ürünler & Sıra:** Ürünlerinizi **üretim listesinde görmek istediğiniz sırayla** ekleyin (“Toplu ekle” ile her satıra bir ürün). Sırayı sürükleyerek veya sıra numarasını yazarak değiştirebilirsiniz. Excel'deki *Ürün | Gönderilecek Adet* tablosu bu sırayla oluşur.
-3. **Kampanyalar:** Platform ve/veya mağaza seçin, kampanyalı ürünleri seçin, kuralı girin (“her 2 adette 1 aynı üründen”, “sipariş başına 1 adet X hediye”, “seçili ürünlerin toplamı 3 olunca…”), tarih aralığı verin. Önizleme örnek adetlerle sonucu gösterir.
-4. **Etiket Yükle:** PDF'leri sürükleyin. Önizlemede yeni / mükerrer / devam etiketleri, eşleşmeyen ürün adları ve tanımsız mağazalar görünür; **Kaydet** ile kayıt alınır.
+3. **Kampanyalar:** Önce kampanya türünü seçin (X alana Y bedava, karışık sepet, X farklı ürün, sipariş tutarı, her siparişe hediye, hediye paketi…). Listede olmayan bir türü “Yeni tür” ile kendiniz ekleyebilirsiniz. Mağazaları “seçilenlerde geçerli” ya da “seçilenler hariç”, ürünleri “sadece seçilenlerde” ya da “seçilenler hariç” olarak seçin — **hiç ürün seçmezseniz kampanya tüm ürünlere uygulanır**. Birden çok hediye ürünü ve sipariş başına üst sınır verilebilir.
+4. **Etiket Yükle:** PDF etiketlerini ve/veya Excel sipariş listelerini (.xlsx) sürükleyin — dosya sayısı sınırı yok (100–200+ PDF, birden çok Excel birlikte). Önizlemede yeni / mükerrer / devam etiketleri, eşleşmeyen ürün adları ve tanımsız mağazalar görünür; **Kaydet** ile kayıt alınır.
 5. **Üretim Listesi:** Gün veya aralık seçip **Excel indir**.
 
 ## Ürün eşleştirme nasıl çalışır?
@@ -49,6 +49,16 @@ Mağazalarda aynı ürün farklı yazılabilir: `Ultra Natura Detox Shot Zencefi
 - Ürün düzenleme penceresi, kural değişikliğinin hangi etiket adlarını etkileyeceğini kaydetmeden önce gösterir.
 
 Raporlar her açılışta güncel eşleştirme ve kampanya ayarlarıyla hesaplanır. Bir eşleştirmeyi düzelttiğinizde geçmiş günlerin raporları da düzelir.
+
+## Excel ile yükleme
+
+Pazaryeri/entegratör sipariş dışa aktarımları (.xlsx) doğrudan yüklenebilir. Sütunlar başlık adından bulunur: *Sipariş No, Paket No, Mağaza, Platform, Müşteri Adı, Şehir, İlçe, Kargo Firması, Kargo Takip No, PTT Barkod, Ürünler, Toplam Adet, Toplam Tutar, Platform Tarihi, Sipariş Durumu*. Ürünler hücresi `Ürün A, varyant x1, Ürün B x2` biçiminde ayrıştırılır; satır başına bir ürün olan listeler de desteklenir. İptal/iade durumundaki satırlar atlanır. Telefon ve adres sunucuya gönderilmez.
+
+Excel'deki **Kargo Takip No**, etiket PDF'inin üstündeki numarayla aynıdır; bu yüzden aynı paket hem PDF hem Excel ile yüklenirse bir kez sayılır. Sipariş tarihi olarak dosya adındaki tarih (örn. `…_20260916_…`) veya Excel'deki platform tarihi seçilebilir.
+
+## Toplu işlemler
+
+Ürünler, mağazalar, kampanyalar, kampanya türleri, siparişler, ürün eşleştirme ve yükleme geçmişi tablolarında satırları işaretleyip toplu **silme** (ve duruma göre aktif/pasif yapma, kategori atama, ürüne atama, kontrol edildi işaretleme, bitirme/arşivleme) yapılabilir. Siparişlerde “filtrelenenlerin tümünü seç” ile sayfalar arası seçim yapılır.
 
 ## Mükerrer ve devam etiketleri
 

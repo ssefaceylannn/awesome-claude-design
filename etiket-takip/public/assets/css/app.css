@@ -417,3 +417,13 @@ dl.kv dd { margin: 0; min-width: 0; }
 .date-in { width: 150px; }
 @media (max-width: 600px) { .date-in { width: 124px; padding-left: 6px !important; padding-right: 4px !important; } }
 @media (max-width: 700px) { .hide-m { display: none; } .t td, .t th { padding-left: 10px; padding-right: 10px; } }
+
+/* toplu seçim */
+.t th.sel, .t td.sel { width: 36px; padding-right: 0; }
+.t .sel input { width: 16px; height: 16px; accent-color: var(--brand); cursor: pointer; vertical-align: middle; }
+.bulkbar { position: sticky; bottom: 12px; z-index: 5; margin: 10px 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: var(--text); color: var(--bg); border-radius: 12px; padding: 8px 12px; box-shadow: var(--shadow-lg); }
+.bulkbar .btn { background: var(--surface); color: var(--text); border-color: transparent; }
+.bulkbar .btn.ghost { background: transparent; color: var(--bg); }
+.bulkbar .btn.danger.solid { background: var(--danger); color: #fff; }
+.rule-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px 36px; gap: 8px; align-items: center; margin-bottom: 8px; }

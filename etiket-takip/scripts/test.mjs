@@ -101,6 +101,42 @@ await test('Kampanyalar: platform, mağaza, tarih, katlanma, karışık sepet', 
   assert.equal(onlyTy.orders, 2);
 });
 
+await test('Kampanya: ürün hariç / tüm ürünler / mağaza hariç / tutar / farklı ürün / üst sınır / hediye paketi', () => {
+  const base = { active: true, platforms: [], storeIds: [], start: '', end: '' };
+  const cfg = (campaigns) => createContext({ ...config, campaigns });
+  const o = { k: 'x', date: '2026-09-23', sender: 'Ultra Natura Trendyol', amount: 750, items: [{ name: 'Detox Shot', qty: 4 }, { name: 'Detox Mix', qty: 2 }, { name: 'Ham Kakao Tozu', qty: 1 }] };
+  const rw = (c) => aggregate([o], cfg([{ id: 'c', name: 'c', ...base, ...c }])).products;
+  // Ürün seçilmedi → tüm ürünler, her ürün ayrı: 4→+2, 2→+1, 1→0
+  let P = rw({ triggerProductIds: [], minQty: 2, mode: 'every', rewards: [{ productId: '', qty: 1 }] });
+  assert.equal(P.get('shot').campaignUnits, 2); assert.equal(P.get('mix').campaignUnits, 1);
+  // Detox Shot hariç
+  P = rw({ triggerProductIds: ['shot'], productMode: 'exclude', minQty: 2, rewards: [{ productId: '', qty: 1 }] });
+  assert.equal(P.get('shot').campaignUnits, 0); assert.equal(P.get('mix').campaignUnits, 1);
+  // Mağaza hariç → uygulanmaz
+  P = rw({ storeIds: ['ty1'], storeMode: 'exclude', rewards: [{ productId: 'kakao', qty: 1 }], condition: 'order' });
+  assert.equal(P.get('kakao').campaignUnits, 0);
+  // Tutar: 750 TL, her 300 TL için 1 kakao → +2
+  P = rw({ condition: 'amount', minAmount: 300, mode: 'every', rewards: [{ productId: 'kakao', qty: 1 }] });
+  assert.equal(P.get('kakao').campaignUnits, 2);
+  // 3 farklı ürün alana bir kez 1 zencefil
+  P = rw({ condition: 'distinct', minQty: 3, mode: 'once', rewards: [{ productId: 'zen', qty: 1 }] });
+  assert.equal(P.get('zen').campaignUnits, 1);
+  // Karışık sepet toplamı 7 → her 2'de 1 (3), üst sınır 2
+  P = rw({ condition: 'qty', countMode: 'sum', minQty: 2, mode: 'every', maxPerOrder: 2, rewards: [{ productId: 'kakao', qty: 1 }] });
+  assert.equal(P.get('kakao').campaignUnits, 2);
+  // Hediye paketi: her siparişe 1 kakao + 2 zencefil
+  P = rw({ condition: 'order', rewards: [{ productId: 'kakao', qty: 1 }, { productId: 'zen', qty: 2 }] });
+  assert.equal(P.get('kakao').campaignUnits, 1); assert.equal(P.get('zen').campaignUnits, 2);
+});
+
+await test('Excel ürün hücresi ayrıştırma', async () => {
+  const { parseItems } = await import('../public/assets/js/core/sheets.js');
+  assert.deepEqual(parseItems('Okyanus Oda Kokusu OK, one size x1, Lavanta Oda Kokusu LK, one size x2', 3), [
+    { name: 'Okyanus Oda Kokusu OK, one size', qty: 1 }, { name: 'Lavanta Oda Kokusu LK, one size', qty: 2 },
+  ]);
+  assert.deepEqual(parseItems('Detox Shot', 4), [{ name: 'Detox Shot', qty: 4 }]);
+});
+
 await test('Oturum jetonu imza ve süre kontrolü', async () => {
   const t = await signToken({ u: 'sami', r: 'admin', exp: Date.now() + 1000 }, 'gizli-anahtar-1234567890');
   assert.equal((await verifyToken(t, 'gizli-anahtar-1234567890')).u, 'sami');

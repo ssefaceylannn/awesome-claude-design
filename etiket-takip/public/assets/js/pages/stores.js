@@ -1,5 +1,5 @@
 // Mağazalar: ekle / düzenle, etiketteki gönderici adlarıyla eşleştir.
-import { html, mount, icon, modal, confirmDialog, toast, uid, PLATFORMS, pLabel, pBadge, n, today, addDays, $, emptyState, collator } from '../core/ui.js';
+import { html, mount, icon, modal, confirmDialog, toast, uid, PLATFORMS, pLabel, pBadge, n, today, addDays, emptyState, collator, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
 import { state, isAdmin, saveSection, fetchOrders } from '../core/api.js';
 import { fold } from '../shared/text.js';
 
@@ -75,6 +75,7 @@ export default async function storesPage(ctx) {
   let recent = [];
   try { recent = await fetchOrders(addDays(today(), -29), today()); } catch (e) { toast(e.message, 'err'); }
 
+  const sel = new Set();
   function render() {
     const stores = state.config.stores;
     const counts = new Map();
@@ -95,19 +96,35 @@ export default async function storesPage(ctx) {
           <td class="num">${admin ? html`<div class="row" style="justify-content:flex-end;gap:6px"><select class="input sm" data-link="${u.sender}" style="width:auto"><option value="">Mevcut mağazaya bağla…</option>${stores.map((s) => html`<option value="${s.id}">${s.name}</option>`)}</select>
             <button class="btn sm primary" data-new="${u.sender}">${icon('plus')}Yeni mağaza</button></div>` : ''}</td></tr>`)}
         </tbody></table></div></div>` : ''}
-      ${stores.length ? byPf.map((g) => html`<div class="card">
+      <div class="stack" id="sCards">${stores.length ? byPf.map((g) => html`<div class="card">
         <div class="card-h">${pBadge(g.p.id)}<h2>${g.p.label}</h2><span class="sub">${g.list.length} mağaza</span></div>
-        <div class="tw"><table class="t"><thead><tr><th>Mağaza</th><th>Etiketteki gönderici adları</th><th class="num">Sipariş (30 gün)</th><th>Durum</th><th></th></tr></thead><tbody>
+        <div class="tw"><table class="t"><thead><tr>${admin ? selTh() : ''}<th>Mağaza</th><th>Etiketteki gönderici adları</th><th class="num">Sipariş (30 gün)</th><th>Durum</th><th></th></tr></thead><tbody>
           ${g.list.map((s) => html`<tr>
+            ${admin ? selTd(s.id, sel) : ''}
             <td><div class="row" style="gap:10px"><span class="sdot" style="background:${s.color};width:12px;height:12px"></span><div><b>${s.name}</b>${s.code ? html` <span class="badge">${s.code}</span>` : ''}${s.note ? html`<div class="muted xs">${s.note}</div>` : ''}</div></div></td>
             <td><div class="row wrap" style="gap:4px">${(s.senders || []).map((x) => html`<span class="chip static">${x}</span>`)}</div></td>
             <td class="num">${n(counts.get(s.id) || 0)}</td>
             <td>${s.active !== false ? html`<span class="badge ok"><span class="dot"></span>Aktif</span>` : html`<span class="badge">Pasif</span>`}</td>
             <td class="num">${admin ? html`<button class="btn sm ghost icon" data-edit="${s.id}" title="Düzenle">${icon('edit')}</button><button class="btn sm ghost icon danger" data-del="${s.id}" title="Sil">${icon('trash')}</button>` : ''}</td>
           </tr>`)}
-        </tbody></table></div></div>`) : html`<div class="card">${emptyState('store', 'Henüz mağaza yok', admin ? 'Sağ üstten “Mağaza ekle” ile Trendyol, ikas ve Shopify mağazalarınızı tanımlayın.' : 'Yönetici henüz mağaza tanımlamadı.')}</div>`}
+        </tbody></table></div></div>`) : html`<div class="card">${emptyState('store', 'Henüz mağaza yok', admin ? 'Sağ üstten “Mağaza ekle” ile Trendyol, ikas ve Shopify mağazalarınızı tanımlayın.' : 'Yönetici henüz mağaza tanımlamadı.')}</div>`}${admin ? bulkBar() : ''}</div>
       <div class="callout info">${icon('info')}<div class="c"><b>Mağaza nasıl tanınır?</b>Etiketteki “Gönderici” alanı, mağazanın gönderici adlarından biriyle karşılaştırılır (büyük/küçük harf ve Türkçe karakter farkı önemsizdir). Kampanyalar ve raporlar mağaza bazında buna göre ayrılır.</div></div>
     </div>`);
+    if (admin && stores.length) wireBulk(ctx.el.querySelector('#sCards'), sel, [
+      { id: 'on', label: 'Aktif yap' },
+      { id: 'off', label: 'Pasif yap' },
+      { id: 'del', label: 'Sil', icon: 'trash', danger: true },
+    ], async (a, ids) => {
+      const set = new Set(ids);
+      if (a === 'del') {
+        if (!(await confirmDialog(`${ids.length} mağaza silinsin mi? Geçmiş siparişleri “Tanımsız” görünür ve mağazaya özel kampanyalar uygulanmaz. Geçici olarak durdurmak için “Pasif yap” kullanabilirsiniz.`, { danger: true, ok: `${ids.length} mağazayı sil` }))) return false;
+        await saveSection('stores', state.config.stores.filter((x) => !set.has(x.id)), `${ids.length} mağaza toplu silindi`);
+      } else {
+        await saveSection('stores', state.config.stores.map((x) => (set.has(x.id) ? { ...x, active: a === 'on' } : x)), `${ids.length} mağaza ${a === 'on' ? 'aktif' : 'pasif'} yapıldı`);
+      }
+      toast('Güncellendi', 'ok');
+      render();
+    });
   }
   render();
 

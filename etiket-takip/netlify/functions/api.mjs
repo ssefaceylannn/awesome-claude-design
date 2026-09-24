@@ -16,6 +16,7 @@ const DEFAULT_CONFIG = () => ({
   stores: [],
   products: [],
   campaigns: [],
+  campaignTemplates: [],
   aliases: {},
   settings: { retentionDays: 365, noiseWords: DEFAULT_NOISE, companyName: '' },
   updatedAt: null,
@@ -85,7 +86,16 @@ const SANITIZE = {
         archived: !!c.archived,
         storeIds: (Array.isArray(c.storeIds) ? c.storeIds : []).filter(id).slice(0, 200),
         platforms: (Array.isArray(c.platforms) ? c.platforms : []).filter((p) => PLATFORMS.includes(p)),
-        triggerProductIds: (Array.isArray(c.triggerProductIds) ? c.triggerProductIds : []).filter(id).slice(0, 200),
+        storeMode: c.storeMode === 'exclude' ? 'exclude' : 'include',
+        triggerProductIds: (Array.isArray(c.triggerProductIds) ? c.triggerProductIds : []).filter(id).slice(0, 500),
+        productMode: c.productMode === 'exclude' ? 'exclude' : 'include',
+        condition: ['qty', 'distinct', 'amount', 'order'].includes(c.condition) ? c.condition : 'qty',
+        minAmount: Math.max(0, Math.min(1e9, parseFloat(c.minAmount) || 0)),
+        maxPerOrder: int(c.maxPerOrder, 0, 99999, 0),
+        rewards: (Array.isArray(c.rewards) ? c.rewards : [])
+          .map((r) => ({ productId: r && r.productId && id(r.productId) ? r.productId : '', qty: int(r && r.qty, 1, 9999, 1) }))
+          .slice(0, 20),
+        templateId: str(c.templateId, 40),
         minQty: int(c.minQty, 1, 9999, 1),
         rewardQty: int(c.rewardQty, 1, 9999, 1),
         rewardProductId: c.rewardProductId && id(c.rewardProductId) ? c.rewardProductId : '',
@@ -107,6 +117,28 @@ const SANITIZE = {
       out[key] = { productId: v.productId, multiplier: int(v.multiplier, 1, 1000, 1), by: str(v.by, 60), at: str(v.at, 40) };
     }
     return out;
+  },
+  campaignTemplates: (arr) => {
+    if (!Array.isArray(arr)) throw new HttpError(400, 'Geçersiz şablon listesi');
+    return arr.slice(0, 200).map((t) => {
+      if (!id(t.id)) throw new HttpError(400, 'Geçersiz şablon kimliği');
+      const r = t.rule || {};
+      return {
+        id: t.id,
+        name: str(t.name, 80) || 'Adsız tür',
+        description: str(t.description, 300),
+        rule: {
+          condition: ['qty', 'distinct', 'amount', 'order'].includes(r.condition) ? r.condition : 'qty',
+          mode: r.mode === 'once' ? 'once' : 'every',
+          countMode: r.countMode === 'sum' ? 'sum' : 'each',
+          minQty: int(r.minQty, 1, 9999, 1),
+          minAmount: Math.max(0, parseFloat(r.minAmount) || 0),
+          maxPerOrder: int(r.maxPerOrder, 0, 99999, 0),
+          rewardSame: r.rewardSame !== false,
+          rewardQty: int(r.rewardQty, 1, 9999, 1),
+        },
+      };
+    });
   },
   settings: (s) => ({
     retentionDays: int(s && s.retentionDays, 30, 3650, 365),
@@ -203,6 +235,10 @@ function sanitizeOrder(o) {
     city: str(o.city, 80),
     cargo: str(o.cargo, 60),
     cargoCode: str(o.cargoCode, 60).replace(/\s+/g, ''),
+    platformOrderNo: str(o.platformOrderNo, 60).replace(/\s+/g, ''),
+    packageNo: str(o.packageNo, 60).replace(/\s+/g, ''),
+    amount: Math.max(0, Math.min(1e9, parseFloat(o.amount) || 0)),
+    source: o.source === 'excel' ? 'excel' : 'pdf',
     items,
     pages: int(o.pages, 1, 100, 1),
     file: str(o.file, 200),
@@ -238,12 +274,19 @@ async function importOrders(req, user) {
     if (o.orphan) return { i, status: lastOrder ? 'merge' : 'error', target: lastOrder, note: lastOrder ? 'Önceki yüklemedeki son siparişin devamı' : 'Devam etiketinin ait olduğu sipariş bulunamadı' };
     if (!o.orderNo) return { i, status: 'error', note: 'Sipariş numarası yok' };
     const k = orderKey(o.sender, o.orderNo);
-    const existingDate = buckets.get(bucketKey(o.orderNo))[k];
+    const bucket = buckets.get(bucketKey(o.orderNo));
+    let existingDate = bucket[k];
+    let existingKey = k;
+    if (!existingDate && /^\d{12,}$/.test(o.orderNo)) {
+      // Uzun kargo takip numarası tekildir: PDF'te gönderici adı Excel'deki mağaza adından farklı olsa da aynı paket
+      const other = Object.keys(bucket).find((x) => x.endsWith('|' + o.orderNo));
+      if (other) { existingDate = bucket[other]; existingKey = other; }
+    }
     if (seen.has(k)) return { i, k, status: 'dup', note: 'Aynı yüklemede tekrar ediyor' };
     seen.add(k);
     if (existingDate) {
       return o.startsAsContinuation
-        ? { i, k, status: 'merge', target: { k, date: existingDate }, note: 'Önceki etiketin devamı, mevcut siparişe eklenecek' }
+        ? { i, k, status: 'merge', target: { k: existingKey, date: existingDate }, note: 'Önceki etiketin devamı, mevcut siparişe eklenecek' }
         : { i, k, status: 'dup', existingDate, note: `Daha önce ${existingDate} tarihinde kaydedilmiş` };
     }
     return { i, k, status: 'new' };
@@ -251,7 +294,8 @@ async function importOrders(req, user) {
   if (dryRun) return json({ results });
   need(user, 'admin', 'personel');
 
-  const batchId = new Date().toISOString().replace(/[-:.TZ]/g, '') + '-' + Math.random().toString(36).slice(2, 6);
+  // Büyük yüklemeler istemciden parça parça gelir; hepsi aynı yükleme kaydına eklenir
+  const batchId = /^[0-9a-z-]{10,40}$/.test(b.batchId || '') ? b.batchId : new Date().toISOString().replace(/[-:.TZ]/g, '') + '-' + Math.random().toString(36).slice(2, 6);
   const at = nowIso();
 
   // 1) Yeni siparişleri dizinde "sahiplen" (eşzamanlı yüklemede aynı sipariş iki kez yazılmasın)
@@ -283,6 +327,10 @@ async function importOrders(req, user) {
         k: r.k, no: o.orderNo, sender: o.sender, platform: o.platform, recipient: o.recipient, city: o.city,
         cargo: o.cargo, cargoCode: o.cargoCode, items: o.items, pages: o.pages, file: o.file,
         date: o.date, batch: batchId, by: user.u, at, checked: false,
+        ...(o.platformOrderNo ? { platformOrderNo: o.platformOrderNo } : {}),
+        ...(o.packageNo ? { packageNo: o.packageNo } : {}),
+        ...(o.amount ? { amount: o.amount } : {}),
+        source: o.source,
       };
       if (!dayAdds.has(o.date)) dayAdds.set(o.date, []);
       dayAdds.get(o.date).push(rec);
@@ -338,17 +386,27 @@ async function importOrders(req, user) {
     merge: results.filter((r) => r.status === 'merge').length,
     error: results.filter((r) => r.status === 'error').length,
   };
-  const batch = {
-    id: batchId, at, by: user.u,
-    files: (Array.isArray(b.files) ? b.files : []).map((f) => str(f, 200)).slice(0, 100),
-    pages: int(b.pages, 0, 100000, 0),
-    counts,
-    dates: [...dayAdds.keys()].sort(),
+  const part = {
+    files: (Array.isArray(b.files) ? b.files : []).map((f) => str(f, 200)).slice(0, 5000),
+    pages: int(b.pages, 0, 1000000, 0),
+    dates: [...dayAdds.keys()],
     orders: results.filter((r) => r.status === 'new').map((r) => ({ k: r.k, date: orders[r.i].date, no: orders[r.i].orderNo })),
     units: results.filter((r) => r.status === 'new').reduce((s, r) => s + orders[r.i].items.reduce((a, it) => a + it.qty, 0), 0),
   };
-  await setJSON(`batch/${batchId}`, batch);
-  await audit(user, 'etiket yükleme', `${counts.new} yeni, ${counts.dup} mükerrer, ${counts.merge} devam · ${batch.files.join(', ')}`);
+  const batch = await update(`batch/${batchId}`, (cur) => {
+    if (!cur) return { id: batchId, at, by: user.u, ...part, dates: part.dates.sort(), counts };
+    return {
+      ...cur,
+      files: cur.files.length ? cur.files : part.files,
+      pages: cur.pages || part.pages,
+      dates: [...new Set([...cur.dates, ...part.dates])].sort(),
+      orders: cur.orders.concat(part.orders),
+      units: cur.units + part.units,
+      counts: Object.fromEntries(Object.keys(counts).map((key) => [key, (cur.counts[key] || 0) + counts[key]])),
+    };
+  });
+  const fl = part.files;
+  await audit(user, 'etiket yükleme', `${counts.new} yeni, ${counts.dup} mükerrer, ${counts.merge} devam · ${fl.length > 3 ? `${fl.length} dosya (${fl.slice(0, 2).join(', ')}…)` : fl.join(', ')}`);
   await maybeCleanup(user);
   return json({ batchId, results, counts });
 }
@@ -407,6 +465,46 @@ async function removeFromIndex(entries) {
       return idx;
     }, {}),
   );
+}
+
+// ------------------------------------------------------------------ silme
+async function deleteOrders(items, user) {
+  const byDate = new Map();
+  for (const it of items) { if (!byDate.has(it.date)) byDate.set(it.date, new Set()); byDate.get(it.date).add(it.k); }
+  const removed = [];
+  await pmap([...byDate.entries()], 8, ([date, keys]) =>
+    update(`day/${date}`, (day) => {
+      if (!day) return undefined;
+      const keep = [];
+      for (const o of day.orders) (keys.has(o.k) ? removed : keep).push(o);
+      if (keep.length === day.orders.length) return undefined;
+      day.orders = keep;
+      return day;
+    }),
+  );
+  if (!removed.length) return 0;
+  await removeFromIndex(removed.map((o) => ({ k: o.k, date: o.date, no: o.no })));
+  await audit(user, 'sipariş silme', removed.length === 1 ? `${removed[0].no} (${removed[0].sender}) · ${removed[0].date}` : `${removed.length} sipariş toplu silindi`);
+  return removed.length;
+}
+
+async function deleteBatch(bid, user) {
+  if (!/^[0-9a-z-]{10,40}$/.test(bid || '')) throw new HttpError(400, 'Geçersiz yükleme');
+  const batch = await getJSON(`batch/${bid}`);
+  if (!batch) throw new HttpError(404, 'Yükleme bulunamadı');
+  const byDate = new Map();
+  for (const o of batch.orders) { if (!byDate.has(o.date)) byDate.set(o.date, new Set()); byDate.get(o.date).add(o.k); }
+  await pmap([...byDate.entries()], 8, ([date, keys]) =>
+    update(`day/${date}`, (day) => {
+      if (!day) return undefined;
+      day.orders = day.orders.filter((x) => !(keys.has(x.k) && x.batch === bid));
+      return day;
+    }),
+  );
+  await removeFromIndex(batch.orders);
+  await del(`batch/${bid}`);
+  await audit(user, 'yükleme silme', `${batch.orders.length} sipariş · ${batch.files.slice(0, 3).join(', ')}${batch.files.length > 3 ? '…' : ''}`);
+  return batch.orders.length;
 }
 
 // ------------------------------------------------------------------ yönlendirici
@@ -469,18 +567,18 @@ export default async (req) => {
       need(user, 'admin');
       const date = url.searchParams.get('date'), k = url.searchParams.get('k');
       if (!isYmd(date) || !k) throw new HttpError(400, 'Eksik bilgi');
-      let removed = null;
-      await update(`day/${date}`, (day) => {
-        if (!day) return undefined;
-        const i = day.orders.findIndex((x) => x.k === k);
-        if (i < 0) return undefined;
-        removed = day.orders.splice(i, 1)[0];
-        return day;
-      });
+      const removed = await deleteOrders([{ date, k }], user);
       if (!removed) throw new HttpError(404, 'Sipariş bulunamadı');
-      await removeFromIndex([{ k, date, no: removed.no }]);
-      await audit(user, 'sipariş silme', `${removed.no} (${removed.sender}) · ${date}`);
       return json({ ok: true });
+    }
+
+    // Toplu sipariş silme: { items: [{date, k}] }
+    if (path === 'orders/delete' && m === 'POST') {
+      need(user, 'admin');
+      const b = await body(req);
+      const items = (Array.isArray(b.items) ? b.items : []).filter((x) => x && isYmd(x.date) && x.k).slice(0, 5000);
+      if (!items.length) throw new HttpError(400, 'Silinecek sipariş seçilmedi');
+      return json({ removed: await deleteOrders(items, user) });
     }
 
     if (path === 'batches' && m === 'GET') {
@@ -492,23 +590,17 @@ export default async (req) => {
 
     if (path === 'batch' && m === 'DELETE') {
       need(user, 'admin');
-      const bid = url.searchParams.get('id');
-      if (!/^[0-9a-z-]{10,40}$/.test(bid || '')) throw new HttpError(400, 'Geçersiz yükleme');
-      const batch = await getJSON(`batch/${bid}`);
-      if (!batch) throw new HttpError(404, 'Yükleme bulunamadı');
-      const byDate = new Map();
-      for (const o of batch.orders) { if (!byDate.has(o.date)) byDate.set(o.date, new Set()); byDate.get(o.date).add(o.k); }
-      await pmap([...byDate.entries()], 8, ([date, keys]) =>
-        update(`day/${date}`, (day) => {
-          if (!day) return undefined;
-          day.orders = day.orders.filter((x) => !(keys.has(x.k) && x.batch === bid));
-          return day;
-        }),
-      );
-      await removeFromIndex(batch.orders);
-      await del(`batch/${bid}`);
-      await audit(user, 'yükleme silme', `${batch.orders.length} sipariş · ${batch.files.join(', ')}`);
-      return json({ ok: true, removed: batch.orders.length });
+      const removed = await deleteBatch(url.searchParams.get('id'), user);
+      return json({ ok: true, removed });
+    }
+
+    // Toplu yükleme silme: { ids: [...] }
+    if (path === 'batches/delete' && m === 'POST') {
+      need(user, 'admin');
+      const b = await body(req);
+      let removed = 0;
+      for (const bid of (Array.isArray(b.ids) ? b.ids : []).slice(0, 500)) removed += await deleteBatch(bid, user);
+      return json({ ok: true, removed });
     }
 
     if (path === 'audit' && m === 'GET') {
@@ -546,7 +638,7 @@ export default async (req) => {
       const b = await body(req);
       if (b.config) {
         const c = b.config;
-        const clean = { stores: SANITIZE.stores(c.stores || []), products: SANITIZE.products(c.products || []), campaigns: SANITIZE.campaigns(c.campaigns || []), aliases: SANITIZE.aliases(c.aliases || {}), settings: SANITIZE.settings(c.settings || {}) };
+        const clean = { stores: SANITIZE.stores(c.stores || []), products: SANITIZE.products(c.products || []), campaigns: SANITIZE.campaigns(c.campaigns || []), campaignTemplates: SANITIZE.campaignTemplates(c.campaignTemplates || []), aliases: SANITIZE.aliases(c.aliases || {}), settings: SANITIZE.settings(c.settings || {}) };
         await update('config', (cur) => ({ ...cur, ...clean, updatedAt: nowIso(), updatedBy: user.u }), DEFAULT_CONFIG);
       }
       if (b.labelnames && typeof b.labelnames === 'object') await update('labelnames', (all) => ({ ...all, ...b.labelnames }), {});

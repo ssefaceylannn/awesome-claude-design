@@ -72,7 +72,7 @@ export default async function scanPage(ctx) {
   async function scan(code) {
     const c = code.replace(/\s+/g, '');
     const alt = c.startsWith('#') ? c.slice(1) : '#' + c;
-    const found = orders.filter((o) => o.cargoCode === c || o.no === c || o.no === alt).sort((a, b) => b.date.localeCompare(a.date));
+    const found = orders.filter((o) => o.cargoCode === c || o.no === c || o.no === alt || o.platformOrderNo === c || o.packageNo === c).sort((a, b) => b.date.localeCompare(a.date));
     const box = $('#result');
     if (!found.length) {
       beep(false);

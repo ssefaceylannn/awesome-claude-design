@@ -239,9 +239,12 @@ export function combinePages(pages) {
 /** Dosya adından tarih çıkar: "..._23.09.2026_1351.pdf" → "2026-09-23" */
 export function dateFromFileName(name) {
   const m = String(name).match(/(\d{1,2})[.\-_](\d{1,2})[.\-_](\d{4})/);
-  if (!m) return '';
-  const d = m[1].padStart(2, '0'), mo = m[2].padStart(2, '0');
-  if (+mo < 1 || +mo > 12 || +d < 1 || +d > 31) return '';
-  return `${m[3]}-${mo}-${d}`;
+  if (m) {
+    const d = m[1].padStart(2, '0'), mo = m[2].padStart(2, '0');
+    if (+mo >= 1 && +mo <= 12 && +d >= 1 && +d <= 31) return `${m[3]}-${mo}-${d}`;
+  }
+  // "batch_..._20260916_0934.xlsx" gibi yyyymmdd biçimi
+  const c = String(name).match(/(?:^|[^0-9])(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?:[^0-9]|$)/);
+  return c ? `${c[1]}-${c[2]}-${c[3]}` : '';
 }
 
