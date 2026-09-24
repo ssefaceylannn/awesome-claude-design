@@ -2,6 +2,7 @@
 import { html, mount, icon, modal, confirmDialog, toast, uid, n, esc, emptyState, sortable, collator, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
 import { api, state, isAdmin, saveSection } from '../core/api.js';
 import { createMatcher, autoKeywords } from '../shared/matcher.js';
+import { parseProductList, planCatalogReplace } from '../core/catalog.js';
 
 let labelNames = null;
 const has = (res, id) => res.productId === id || (res.parts || []).some((x) => x.productId === id);
@@ -102,6 +103,69 @@ export async function productForm(product, { presetName } = {}) {
   return res === 'save';
 }
 
+/** Katalogu yapıştırılan listeyle değiştir: SKU | Marka | Ürün [| Kategori], bu sırayla */
+async function pasteList() {
+  let plan = null;
+  const res = await modal({
+    title: 'Ürün listesini yapıştır',
+    size: 'lg',
+    body: html`<div class="stack">
+      <p class="muted small">Excel'den <b>SKU · Marka · Ürün</b> (isteğe bağlı 4. sütun: Kategori) sütunlarını kopyalayıp yapıştırın. Katalog <b>tam olarak bu liste ve bu sıra</b> olur. Mevcut ürünler önce addan, sonra SKU'dan eşleştirilir; eşleşenlerin kampanya, eşleştirme ve geçmiş kayıtları korunur. Aynı satır iki kez varsa bir kez alınır.</p>
+      <textarea class="input" id="plist" rows="10" placeholder="IC-CCN-250ML&#9;Momordica&#9;Coconut Mix&#10;IC-DTX-250ML&#9;Momordica&#9;DetoxMix"></textarea>
+      <div id="pprev"></div>
+    </div>`,
+    actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Kataloğu bu listeyle değiştir', value: 'save', variant: 'primary' }],
+    onOpen: (d) => {
+      const ta = d.querySelector('#plist');
+      let t;
+      const draw = () => {
+        const rows = parseProductList(ta.value);
+        if (!rows.length) { plan = null; return mount(d.querySelector('#pprev'), ''); }
+        plan = planCatalogReplace(state.config.products, rows, state.config.settings.noiseWords);
+        const renamed = plan.kept.filter((k) => k.old.name !== k.row.name);
+        mount(d.querySelector('#pprev'), html`<div class="kpis">
+            <div class="kpi"><div class="l">Listedeki ürün</div><div class="v">${plan.products.length}</div></div>
+            <div class="kpi"><div class="l">Mevcut ürünle eşleşen</div><div class="v">${plan.kept.length}</div><div class="s">${renamed.length} tanesinin adı güncellenecek</div></div>
+            <div class="kpi"><div class="l">Yeni eklenecek</div><div class="v">${plan.added.length}</div></div>
+            <div class="kpi"><div class="l">Katalogdan çıkacak</div><div class="v">${plan.removed.length + plan.merged}</div><div class="s">${plan.merged} tanesi listedeki ürünle birleşir</div></div>
+          </div>
+          ${plan.duplicates.length ? html`<div class="callout info" style="margin-top:10px">${icon('info')}<div class="c"><b>Aynı adlı ürünler:</b> ${plan.duplicates.join(', ')} — etiket hangi mağazadan geliyorsa o mağazanın markasındaki ürün seçilir.</div></div>` : ''}
+          ${plan.removed.length ? html`<div class="callout warn" style="margin-top:10px">${icon('alert')}<div class="c"><b>Listede olmadığı için silinecek:</b> ${plan.removed.map((p) => p.name).join(' · ')}</div></div>` : ''}
+          ${renamed.length ? html`<details style="margin-top:10px"><summary class="small" style="cursor:pointer">Adı güncellenecek ${renamed.length} ürün (etiketlerdeki eski adla da eşleşmeye devam eder)</summary>
+            <div class="small" style="margin-top:6px;max-height:200px;overflow:auto">${renamed.map((k) => html`<div><span class="muted">${k.old.name}</span> → <b>${k.row.name}</b></div>`)}</div></details>` : ''}
+          ${plan.added.length ? html`<details style="margin-top:6px"><summary class="small" style="cursor:pointer">Yeni eklenecek ${plan.added.length} ürün</summary><div class="small" style="margin-top:6px">${plan.added.map((r) => r.name).join(' · ')}</div></details>` : ''}`);
+      };
+      ta.addEventListener('input', () => { clearTimeout(t); t = setTimeout(draw, 200); });
+      ta.focus();
+    },
+    onSubmit: async () => {
+      if (!plan || !plan.products.length) throw new Error('Önce listeyi yapıştırın');
+      // Silinen/birleşen ürünlere bağlı kampanya ve eşleştirmeleri yeni kimliklere taşı
+      const remap = plan.remap;
+      const alive = new Set(plan.products.map((p) => p.id));
+      const mapId = (id) => (remap[id] || id);
+      const aliases = {};
+      for (const [k, a] of Object.entries(state.config.aliases || {})) {
+        if (a.productId === '__bundle') aliases[k] = { ...a, parts: (a.parts || []).map((x) => ({ ...x, productId: mapId(x.productId) })).filter((x) => alive.has(x.productId)) };
+        else if (a.productId === '__ignore' || alive.has(mapId(a.productId))) aliases[k] = { ...a, productId: a.productId === '__ignore' ? a.productId : mapId(a.productId) };
+      }
+      const campaigns = (state.config.campaigns || []).map((c) => ({
+        ...c,
+        triggerProductIds: [...new Set((c.triggerProductIds || []).map(mapId))],
+        rewardProductId: c.rewardProductId ? mapId(c.rewardProductId) : '',
+        rewards: (c.rewards || []).map((r) => ({ ...r, productId: r.productId ? mapId(r.productId) : '' })),
+      }));
+      await saveSection('products', plan.products, `ürün listesi yapıştırıldı: ${plan.products.length} ürün (${plan.added.length} yeni, ${plan.removed.length + plan.merged} çıkarıldı)`);
+      if (Object.keys(remap).length) {
+        await saveSection('aliases', aliases, 'ürün listesi değişikliği: eşleştirmeler taşındı');
+        await saveSection('campaigns', campaigns, 'ürün listesi değişikliği: kampanya ürünleri taşındı');
+      }
+      toast(`Katalog güncellendi: ${plan.products.length} ürün`, 'ok');
+    },
+  });
+  return res === 'save';
+}
+
 async function bulkAdd() {
   const res = await modal({
     title: 'Toplu ürün ekle',
@@ -128,7 +192,8 @@ async function bulkAdd() {
 export default async function productsPage(ctx) {
   const admin = isAdmin();
   if (admin) {
-    mount(ctx.actions, html`<button class="btn" id="bulk">${icon('copy')}Toplu ekle</button><button class="btn primary" id="add">${icon('plus')}Ürün ekle</button>`);
+    mount(ctx.actions, html`<button class="btn" id="paste">${icon('sheet')}Listeyi yapıştır</button><button class="btn" id="bulk">${icon('copy')}Toplu ekle</button><button class="btn primary" id="add">${icon('plus')}Ürün ekle</button>`);
+    ctx.actions.querySelector('#paste').addEventListener('click', async () => { if (await pasteList()) render(); });
     ctx.actions.querySelector('#add').addEventListener('click', async () => { if (await productForm()) render(); });
     ctx.actions.querySelector('#bulk').addEventListener('click', async () => { if (await bulkAdd()) render(); });
   }
@@ -165,7 +230,7 @@ export default async function productsPage(ctx) {
             ${admin ? selTd(p.id, sel) : ''}
             ${canDrag ? html`<td class="grip" title="Sürükle">${icon('grip')}</td>` : ''}
             <td class="pos">${canDrag ? html`<input class="input sm" type="number" min="1" max="${all.length}" value="${pos}" data-pos="${p.id}">` : html`<span class="muted">${pos}</span>`}</td>
-            <td><b>${p.name}</b>${p.sku ? html`<div class="muted xs">${p.sku}</div>` : ''}</td>
+            <td><b>${p.name}</b>${p.sku || p.brand ? html`<div class="muted xs">${[p.brand, p.sku].filter(Boolean).join(' · ')}</div>` : ''}</td>
             <td>${p.category ? html`<span class="badge">${p.category}</span>` : html`<span class="muted">—</span>`}</td>
             <td class="small">${p.keywords ? html`<code>${p.keywords.replace(/\n/g, ' ‖ ')}</code>` : html`<span class="muted">otomatik: ${autoKeywords(p.name, state.config.settings.noiseWords)}</span>`}${p.exclude ? html`<div class="xs unm">hariç: ${p.exclude}</div>` : ''}${p.packMultiplier ? html` <span class="badge info">×paket</span>` : ''}</td>
             <td class="num">${n(counts.get(p.id) || 0)}</td>

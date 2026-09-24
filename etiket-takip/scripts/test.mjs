@@ -62,6 +62,42 @@ await test('Birleşik ad iki ürüne bölünür (Daily Shake Ginger Shot)', () =
   assert.equal(R.unmatched.size, 0);
 });
 
+await test('Yapıştırılan ürün listesi: SKU ile eşleştir, sıra, tekrar, marka ayrımı', async () => {
+  const { parseProductList, planCatalogReplace } = await import('../public/assets/js/core/catalog.js');
+  const text = 'IC-CCN-250ML\tMomordica\tCoconut Mix\nIC-DTX-250ML\tMomordica\tDetoxMix\nGDA-DSK-200GR\tMomordica\tDaily Shake Ara Öğün Tozu\n' +
+    'TAK-KMK-680GR - ULT\tUltra Natura\tKaramürver ve Karadut Özü\nTAK-KMK-680GR\tPower Vital\tKaramürver ve Karadut Özü\nIC-CCN-250ML\tMomordica\tCoconut Mix\n';
+  const rows = parseProductList(text);
+  assert.equal(rows.length, 5); // son satır tekrar
+  const existing = [
+    { id: 'old1', name: 'Coconut Mix', sku: 'IC-CCN-250ML', keywords: 'coconut mix' },
+    { id: 'old2', name: 'Detox Mix', sku: 'IC-DTX-250ML', keywords: '' },
+    { id: 'old3', name: 'Daily Shake', sku: '', keywords: '' },
+    { id: 'gone', name: 'Silinecek Ürün', sku: 'X-1' },
+  ];
+  const plan = planCatalogReplace(existing, rows);
+  assert.deepEqual(plan.products.map((p) => p.name), ['Coconut Mix', 'DetoxMix', 'Daily Shake Ara Öğün Tozu', 'Karamürver ve Karadut Özü', 'Karamürver ve Karadut Özü']);
+  assert.equal(plan.products[0].id, 'old1');
+  assert.equal(plan.products[1].id, 'old2');        // SKU ile eşleşti, adı değişti
+  assert.equal(plan.removed.map((p) => p.id).join(), 'gone');
+  // SKU'suz "Daily Shake" → listedeki "Daily Shake Ara Öğün Tozu"na birleşir, bağlantıları taşınır
+  assert.equal(plan.remap.old3, plan.products[2].id);
+  assert.ok(createMatcher({ products: plan.products })('Daily Shake').productId === plan.products[2].id);
+  // Yanlış SKU: eski kayıtta Kabak yağı Tatlı Badem SKU'sunu taşıyorsa ad benzemediği için eşleşmez
+  const p2 = planCatalogReplace([{ id: 'k', name: 'Kabak Çekirdeği Yağı', sku: 'YAG-TBD-250ML' }], parseProductList('YAG-KCY-250ML\tUltra Natura\tKabak Çekirdeği Yağı\nYAG-TBD-250ML\tUltra Natura\tTatlı Badem Yağı'));
+  assert.equal(p2.products[0].id, 'k');
+  assert.notEqual(p2.products[1].id, 'k');
+  assert.equal(plan.products[3].category, 'Takviye & Kapsül');
+  // Eski adla etiketler hâlâ eşleşir
+  const m = createMatcher({ products: plan.products });
+  assert.equal(m('Detox Mix').productId, 'old2');
+  // Aynı adlı iki marka: mağazanın markasına göre ayrılır
+  const ctx = createContext({ products: plan.products, stores: [{ id: 'pv', name: 'Power Vital İkas', platform: 'ikas', senders: ['Power Vital İkas'] }, { id: 'un', name: 'Ultra Natura İkas', platform: 'ikas', senders: ['Ultra Natura İkas'] }], campaigns: [], aliases: {}, settings: {} });
+  const who = (sender) => aggregate([{ k: 'a', date: '2026-09-24', sender, items: [{ name: 'Karamürver ve Karadut Özü 680 gr', qty: 1 }] }], ctx);
+  const pv = who('Power Vital İkas'), un = who('Ultra Natura İkas');
+  assert.equal(plan.products.find((p) => p.brand === 'Power Vital').id, [...pv.products.keys()][0]);
+  assert.equal(plan.products.find((p) => p.brand === 'Ultra Natura').id, [...un.products.keys()][0]);
+});
+
 await test('Gramaj/hacim farkı ayrı ürün sayılır', () => {
   const m = createMatcher({ products });
   assert.equal(m('Sultan Sirkesi - 500ml').productId, 's500');

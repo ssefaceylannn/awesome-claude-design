@@ -101,7 +101,7 @@ export default async function productionPage(ctx) {
         <div class="tabs">${[['list', 'Üretim listesi'], ['matrix', 'Mağaza × ürün'], ['stores', 'Mağaza özeti'], ['camps', 'Kampanyalar']].map(([k, l]) => html`<button data-v="${k}" class="${view === k ? 'on' : ''}">${l}</button>`)}</div>
         ${view === 'list' ? html`<div class="tw"><table class="t"><thead><tr>${sortTh('catalog', '#', 'num')}${sortTh('name', 'Ürün')}${sortTh('cat', 'Kategori', 'hide-m')}${sortTh('label', 'Etiket', 'num')}${sortTh('camp', 'Kamp.', 'num')}${sortTh('total', 'Gönderilecek', 'num')}${sortTh('orders', 'Sipariş', 'num hide-m')}<th class="hide-m" style="width:22%"></th></tr></thead><tbody>
           ${rows.length ? rows.map((r) => html`<tr class="${r.total ? '' : 'muted'}">
-            <td class="num muted" title="Katalog sırası">${r.pos}</td><td><b>${r.product.name}</b></td><td class="hide-m">${r.product.category ? html`<span class="badge">${r.product.category}</span>` : ''}</td>
+            <td class="num muted" title="Katalog sırası">${r.pos}</td><td><b>${r.product.name}</b>${r.product.brand ? html` <span class="muted xs">${r.product.brand}</span>` : ''}</td><td class="hide-m">${r.product.category ? html`<span class="badge">${r.product.category}</span>` : ''}</td>
             <td class="num">${n(r.labelUnits)}</td><td class="num">${r.campaignUnits ? html`<span class="gift">+${n(r.campaignUnits)}</span>` : html`<span class="muted">—</span>`}</td>
             <td class="num big">${n(r.total)}</td><td class="num hide-m">${n(r.orders)}</td>
             <td class="hide-m"><div class="progress" style="height:6px"><i style="width:${(r.total / maxT) * 100}%"></i></div></td></tr>`)

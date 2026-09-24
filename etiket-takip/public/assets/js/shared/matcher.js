@@ -105,6 +105,12 @@ export function createMatcher(config) {
           const i = toks.findIndex((t, j) => free(j) && tokenHit(kw, t));
           if (i >= 0) { used.add(i); score += 70; return true; }
         }
+        // Bitişik yazım: "detoxmix" ↔ "detox mix"
+        for (const kw of alts) {
+          if (kw.length < 6 || /\d/.test(kw)) continue;
+          const i = toks.findIndex((t, j) => j + 1 < toks.length && free(j) && free(j + 1) && t + toks[j + 1] === kw);
+          if (i >= 0) { used.add(i); used.add(i + 1); score += 90; return true; }
+        }
         return false;
       });
       if (ok && (!best || score > best.score)) best = { score, used };

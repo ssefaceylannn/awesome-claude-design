@@ -81,6 +81,24 @@ export function productEligible(c, productId) {
 
 /** Tek sipariş: satırları eşleştir, kampanyaları uygula */
 /**
+ * Aynı ada sahip farklı marka ürünleri (ör. iki "Karamürver ve Karadut Özü"):
+ * belirsiz eşleşmede, markası mağaza adında geçen ürün seçilir.
+ */
+function byBrand(m, store, sender, ctx) {
+  if (!m.candidates || m.candidates.length < 2 || m.method === 'manual') return m;
+  const ns = (id) => fold((ctx.productsById.get(id) || {}).name || '').replace(/\s+/g, '');
+  // Belirsiz eşleşme ya da seçilen ürünle aynı adlı (farklı yazımlı) başka marka ürünü varsa
+  const pool = m.method === 'ambiguous' ? m.candidates : m.productId ? m.candidates.filter((id) => ns(id) === ns(m.productId)) : [];
+  if (pool.length < 2) return m;
+  const hay = fold(`${store ? store.name : ''} ${sender || ''}`).replace(/\s+/g, '');
+  const hit = pool.filter((id) => {
+    const b = (ctx.productsById.get(id) || {}).brand;
+    return b && hay.includes(fold(b).replace(/\s+/g, ''));
+  });
+  return hit.length === 1 ? { ...m, productId: hit[0], method: 'brand', multiplier: 1 } : m;
+}
+
+/**
  * Eski sistemden aktarılan günlük özet ("arşiv"): sipariş detayı yok; etiket ve
  * kampanya adetleri o gün kaydedildiği gibi sabit kullanılır, yeniden hesaplanmaz.
  */
@@ -88,7 +106,7 @@ function computeSummary(o, ctx) {
   const store = ctx.resolveStore(o.sender);
   const platform = (store && store.platform) || o.platform || '';
   const toLines = (list) => (list || []).flatMap((it) => {
-    const m = ctx.match(it.name);
+    const m = byBrand(ctx.match(it.name), store, o.sender, ctx);
     if (m.parts && m.parts.length) return m.parts.map((p) => ({ raw: it.name, qty: it.qty, productId: p.productId, ignored: false, method: m.method, mult: p.qty, units: it.qty * p.qty, candidates: [] }));
     return [{ raw: it.name, qty: it.qty, productId: m.productId, ignored: !!m.ignored, method: m.method, mult: 1, units: it.qty, candidates: m.candidates }];
   });
@@ -102,7 +120,7 @@ export function computeOrder(o, ctx) {
   const store = ctx.resolveStore(o.sender);
   const platform = (store && store.platform) || o.platform || '';
   const lines = (o.items || []).flatMap((it) => {
-    const m = ctx.match(it.name);
+    const m = byBrand(ctx.match(it.name), store, o.sender, ctx);
     // Set / birleşik ad: her ürün ayrı satır olarak sayılır
     if (m.parts && m.parts.length) {
       return m.parts.map((p) => ({ raw: it.name, qty: it.qty, productId: p.productId, ignored: false, method: m.method, bundle: true, mult: p.qty, units: it.qty * p.qty, candidates: [] }));
