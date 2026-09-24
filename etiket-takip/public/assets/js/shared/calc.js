@@ -55,7 +55,7 @@ export function normCampaign(c) {
     pureOnly: !!c.pureOnly,
     minAmount: Math.max(0, +c.minAmount || 0),
     maxPerOrder: Math.max(0, +c.maxPerOrder || 0),
-    mode: c.mode === 'once' ? 'once' : 'every',
+    mode: ['every', 'once', 'roundup'].includes(c.mode) ? c.mode : 'every',
     countMode: c.countMode === 'sum' ? 'sum' : 'each',
     rewards,
   };
@@ -101,7 +101,12 @@ export function computeOrder(o, ctx) {
     if (!eligible.length) continue;
     // Karışık siparişte uygulanmaz: sipariş tek çeşit üründen oluşmalı
     if (c.pureOnly && distinctInOrder !== 1) continue;
-    const times = (q, min) => (q < min || (c.maxQty && q > c.maxQty) ? 0 : c.mode === 'once' ? 1 : Math.floor(q / min));
+    // roundup: adedi X'in katına tamamla (X=2 → 1→+1, 2→0, 3→+1, 4→0)
+    const times = (q, min) => {
+      if (c.maxQty && q > c.maxQty) return 0;
+      if (c.mode === 'roundup') return q > 0 ? (min - (q % min)) % min : 0;
+      return q < min ? 0 : c.mode === 'once' ? 1 : Math.floor(q / min);
+    };
     const out = [];
     const give = (t, sameAs) => {
       if (!t) return;

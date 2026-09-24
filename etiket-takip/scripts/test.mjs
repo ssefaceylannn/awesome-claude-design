@@ -145,6 +145,13 @@ await test('2. ürün 1 TL: yalnızca tek ürünlü ve 1 adetlik siparişe +1', 
   assert.equal(extra([{ name: 'Coconut Mix', qty: 1 }], 'Diğer Mağaza'), 0);                     // başka mağaza
 });
 
+await test('Katına tamamla: 1→2, 2→2, 3→4, 4→4', () => {
+  const ctx = createContext({ products: [{ id: 'a', name: 'Coconut Mix' }], stores: [], aliases: {}, settings: {},
+    campaigns: [{ id: 'c', name: 'Çifte tamamla', active: true, platforms: [], storeIds: [], triggerProductIds: ['a'], condition: 'qty', countMode: 'each', mode: 'roundup', minQty: 2, rewards: [{ productId: '', qty: 1 }] }] });
+  const total = (q) => aggregate([{ k: 'x', date: '2026-09-24', sender: 'X', items: [{ name: 'Coconut Mix', qty: q }] }], ctx).totalUnits;
+  assert.deepEqual([1, 2, 3, 4, 5].map(total), [2, 2, 4, 4, 6]);
+});
+
 await test('Excel ürün hücresi ayrıştırma', async () => {
   const { parseItems } = await import('../public/assets/js/core/sheets.js');
   assert.deepEqual(parseItems('Okyanus Oda Kokusu OK, one size x1, Lavanta Oda Kokusu LK, one size x2', 3), [

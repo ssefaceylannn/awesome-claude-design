@@ -102,7 +102,7 @@ const SANITIZE = {
         rewardQty: int(c.rewardQty, 1, 9999, 1),
         rewardProductId: c.rewardProductId && id(c.rewardProductId) ? c.rewardProductId : '',
         countMode: c.countMode === 'sum' ? 'sum' : 'each',
-        mode: c.mode === 'once' ? 'once' : 'every',
+        mode: ['every', 'once', 'roundup'].includes(c.mode) ? c.mode : 'every',
         start: ymdOrEmpty(c.start),
         end: ymdOrEmpty(c.end),
         createdAt: str(c.createdAt, 40) || nowIso(),
@@ -131,7 +131,7 @@ const SANITIZE = {
         description: str(t.description, 300),
         rule: {
           condition: ['qty', 'distinct', 'amount', 'order'].includes(r.condition) ? r.condition : 'qty',
-          mode: r.mode === 'once' ? 'once' : 'every',
+          mode: ['every', 'once', 'roundup'].includes(r.mode) ? r.mode : 'every',
           countMode: r.countMode === 'sum' ? 'sum' : 'each',
           minQty: int(r.minQty, 1, 9999, 1),
           minAmount: Math.max(0, parseFloat(r.minAmount) || 0),
