@@ -62,6 +62,10 @@ Excel'deki **Kargo Takip No**, etiket PDF'inin üstündeki numarayla aynıdır; 
 
 Ürünler, mağazalar, kampanyalar, kampanya türleri, siparişler, ürün eşleştirme ve yükleme geçmişi tablolarında satırları işaretleyip toplu **silme** (ve duruma göre aktif/pasif yapma, kategori atama, ürüne atama, kontrol edildi işaretleme, bitirme/arşivleme) yapılabilir. Siparişlerde “filtrelenenlerin tümünü seç” ile sayfalar arası seçim yapılır.
 
+## Ürün arama ve ürün detayı
+
+Her sayfanın üstündeki **Ürün ara** kutusuna (kısayol: `/` veya `Ctrl+K`) ürün adı, marka ya da SKU yazın; öneriler yazdıkça gelir (Türkçe karakter ve “DetoxMix / Detox Mix” yazım farkı önemsizdir). Seçince ürünün sayfası açılır: seçili tarih aralığında toplam gönderilen, etiketten/kampanyadan gelen adet, günlük grafik, mağaza bazında dağılım, kampanyalar, birlikte alınan ürünler, etiketlerde geçen adları ve sipariş listesi. Mağaza/platform filtresi ve Excel indirme vardır. Boş kutuya tıklayınca son bakılan ürünler görünür.
+
 ## Mükerrer ve devam etiketleri
 
 - Aynı **mağaza + sipariş numarası** ikinci kez yüklenirse (aynı dosyada ya da aylar sonra) hesaba katılmaz. Farklı mağazalardaki aynı numaralar (ör. ikas'ta `1001`) karışmaz.

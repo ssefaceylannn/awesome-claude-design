@@ -3,6 +3,7 @@ import { html, mount, icon, esc, toast, $ } from './core/ui.js';
 import { api, boot, state, can } from './core/api.js';
 import { isArchiveOnly } from './shared/matcher.js';
 import { brandResolved } from './shared/calc.js';
+import { mountProductSearch } from './core/search.js';
 
 const NAV = [
   { group: 'Operasyon', items: [
@@ -24,6 +25,8 @@ const NAV = [
     { id: 'settings', label: 'Ayarlar & Kayıtlar', icon: 'settings' },
   ] },
 ];
+// Menüde görünmeyen sayfalar
+const HIDDEN = [{ id: 'product', label: 'Ürün' }];
 const ROLE_LABEL = { admin: 'Yönetici', personel: 'Personel', izleyici: 'İzleyici' };
 const pages = {};
 let cleanup = null;
@@ -73,7 +76,7 @@ export function navigate(id, params) {
 
 async function route() {
   const { id, params } = parseHash();
-  const item = NAV.flatMap((g) => g.items).find((i) => i.id === id);
+  const item = [...NAV.flatMap((g) => g.items), ...HIDDEN].find((i) => i.id === id);
   if (!item) return navigate('dashboard');
   if (item.role && !can(item.role)) { toast('Bu sayfaya erişim yetkiniz yok', 'err'); return navigate('dashboard'); }
   document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('active', a.dataset.id === id));
@@ -82,8 +85,9 @@ async function route() {
   current = id;
   const top = $('#topbar');
   mount(top, html`<button class="btn ghost icon menu-btn" id="menuBtn" aria-label="Menü">${icon('menu')}</button>
-    <div class="title"><h1>${item.label}</h1><small id="pageSub"></small></div><div class="actions" id="pageActions"></div>`);
+    <div class="title"><h1>${item.label}</h1><small id="pageSub"></small></div><div id="gsearch"></div><div class="actions" id="pageActions"></div>`);
   $('#menuBtn').addEventListener('click', () => $('#app').classList.add('nav-open'));
+  mountProductSearch($('#gsearch'), (p) => navigate('product', { id: p.id }));
   // Her sayfa için yeni bir kap: önceki sayfanın olay dinleyicileri taşınmasın
   const old = $('#page');
   const el = old.cloneNode(false);
@@ -132,6 +136,14 @@ export const refreshBadges = unmatchedBadge;
   sidebar();
   $('#scrim').addEventListener('click', () => $('#app').classList.remove('nav-open'));
   window.addEventListener('hashchange', route);
+  // "/" veya Ctrl+K: ürün aramasına odaklan
+  document.addEventListener('keydown', (e) => {
+    const typing = /^(input|textarea|select)$/i.test(e.target.tagName) || e.target.isContentEditable;
+    if ((e.key === '/' && !typing) || (e.key.toLowerCase() === 'k' && (e.ctrlKey || e.metaKey))) {
+      const i = document.querySelector('.gsearch input');
+      if (i) { e.preventDefault(); i.focus(); }
+    }
+  });
   route();
   unmatchedBadge();
 })();

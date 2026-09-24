@@ -142,6 +142,18 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .topbar .title small { color: var(--muted); font-size: .8rem; }
 .topbar .actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .menu-btn { display: none; }
+/* üst çubuk ürün araması */
+#gsearch { flex: 0 1 340px; min-width: 180px; margin-left: 12px; }
+.gsearch { position: relative; }
+.gsearch > svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; color: var(--muted); pointer-events: none; }
+.gsearch input.input { width: 100%; padding-left: 32px; }
+.gs-pop { position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; right: 0; min-width: 280px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); padding: 6px; max-height: 420px; overflow-y: auto; }
+.gs-i { padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.gs-i.on, .gs-i:hover { background: var(--brand-50); }
+.gs-n { font-size: .9rem; } .gs-n b { color: var(--brand); }
+.gs-m { font-size: .74rem; color: var(--muted); margin-top: 1px; }
+.gs-h { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 6px 10px 4px; }
+.gs-empty { padding: 10px; color: var(--muted); font-size: .86rem; }
 .page { padding: 24px 28px 48px; max-width: 1480px; width: 100%; }
 .scrim { display: none; }
 
@@ -151,7 +163,8 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
   .app.nav-open .sidebar { transform: none; }
   .app.nav-open .scrim { display: block; position: fixed; inset: 0; background: rgba(0, 0, 0, .4); z-index: 25; }
   .menu-btn { display: inline-flex; }
-  .topbar { padding: 12px 16px; }
+  .topbar { padding: 12px 16px; flex-wrap: wrap; }
+  #gsearch { order: 10; flex: 1 1 100%; margin-left: 0; }
   .page { padding: 16px 16px 40px; }
 }
 

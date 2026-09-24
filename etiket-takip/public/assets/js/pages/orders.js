@@ -98,7 +98,7 @@ export default async function ordersPage(ctx) {
       if (status === 'done' && !o.checked) return false;
       if (status === 'multi' && !(o.pages > 1)) return false;
       if (!ql) return true;
-      return [o.no, o.platformOrderNo, o.packageNo, o.recipient, o.cargoCode, o.sender, c.store && c.store.name, ...o.items.map((i) => i.name)].join(' ').toLocaleLowerCase('tr-TR').includes(ql);
+      return [o.no, o.platformOrderNo, o.packageNo, o.recipient, o.cargoCode, o.sender, c.store && c.store.name, ...o.items.map((i) => i.name), ...c.lines.filter((l) => l.productId).map((l) => state.ctx.label(l.productId)), ...c.rewards.map((r) => state.ctx.label(r.productId))].join(' ').toLocaleLowerCase('tr-TR').includes(ql);
     }).reverse();
   }
 
