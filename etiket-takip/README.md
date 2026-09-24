@@ -8,7 +8,7 @@ Trendyol, ikas ve Shopify mağazalarının kargo etiketi PDF'lerini okuyup; mağ
 
 1. **Netlify → Add new site → Import an existing project → GitHub** ve bu repoyu seçin.
    Ayarlar repodaki `netlify.toml` dosyasından otomatik gelir (base: `etiket-takip`, publish: `public`). Branch olarak bu kodun bulunduğu branch'i seçin.
-2. **Site configuration → Environment variables** bölümüne iki değişken ekleyin:
+2. **Project configuration → Environment variables** bölümüne iki değişken ekleyin:
 
    | Değişken | Değer |
    |---|---|

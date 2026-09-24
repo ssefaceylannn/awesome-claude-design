@@ -31,7 +31,7 @@ export default async function usersPage(ctx) {
       <div class="card"><div class="card-h"><h2>Kullanıcı ekleme / şifre değiştirme</h2></div><div class="card-b stack small">
         <p>Kullanıcılar güvenlik için Netlify üzerinden yönetilir:</p>
         <ol style="margin:0;padding-left:18px;display:grid;gap:6px">
-          <li>Netlify → sitenizi seçin → <b>Site configuration → Environment variables</b></li>
+          <li>Netlify → sitenizi seçin → <b>Project configuration → Environment variables</b></li>
           <li><code>USERS</code> değişkenini düzenleyin. Her kullanıcı <code>kullanici:sifre:rol</code> biçiminde, aralarında virgül:</li>
         </ol>
         <pre style="background:var(--surface-3);padding:10px;border-radius:8px;overflow:auto;margin:0">sami:GucluSifre!2026:admin,

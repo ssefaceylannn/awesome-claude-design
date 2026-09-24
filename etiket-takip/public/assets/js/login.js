@@ -15,7 +15,7 @@ const show = (text, type = 'err') => {
 };
 
 fetch('/api/login').then((r) => r.json()).then((j) => {
-  if (!j.configured) show('Henüz kullanıcı tanımlanmamış. Netlify → Site configuration → Environment variables bölümüne USERS değişkenini ekleyin.', 'warn');
+  if (!j.configured) show('Henüz kullanıcı tanımlanmamış. Netlify → Project configuration → Environment variables bölümüne USERS değişkenini ekleyin.', 'warn');
 }).catch(() => {});
 
 form.addEventListener('submit', async (e) => {
