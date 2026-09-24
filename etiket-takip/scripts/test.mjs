@@ -129,6 +129,22 @@ await test('Kampanya: ürün hariç / tüm ürünler / mağaza hariç / tutar / 
   assert.equal(P.get('kakao').campaignUnits, 1); assert.equal(P.get('zen').campaignUnits, 2);
 });
 
+await test('2. ürün 1 TL: yalnızca tek ürünlü ve 1 adetlik siparişe +1', () => {
+  const ctx = createContext({
+    products: [{ id: 'coco', name: 'Coconut Mix' }, { id: 'detox', name: 'Detox Shot' }],
+    stores: [{ id: 'mom', name: 'Momordica Trendyol', platform: 'trendyol', senders: ['Momordica Trendyol'] }, { id: 'oth', name: 'Diğer', platform: 'trendyol', senders: ['Diğer Mağaza'] }],
+    campaigns: [{ id: 'c', name: '2. ürün 1 TL', active: true, platforms: [], storeIds: ['mom'], triggerProductIds: ['coco'], condition: 'qty', countMode: 'each', mode: 'once', minQty: 1, maxQty: 1, pureOnly: true, rewards: [{ productId: '', qty: 1 }] }],
+    aliases: {}, settings: {},
+  });
+  const extra = (items, sender = 'Momordica Trendyol') => aggregate([{ k: 'x', date: '2026-09-24', sender, items }], ctx).campaignUnits;
+  assert.equal(extra([{ name: 'Coconut Mix', qty: 1 }]), 1);                                     // 1 coconut → +1
+  assert.equal(extra([{ name: 'Coconut Mix', qty: 2 }]), 0);                                     // 2 coconut → yok
+  assert.equal(extra([{ name: 'Coconut Mix', qty: 1 }, { name: 'Detox Shot', qty: 1 }]), 0);     // karışık → yok
+  assert.equal(extra([{ name: 'Coconut Mix', qty: 1 }, { name: 'Detox Shot', qty: 2 }]), 0);     // karışık → yok
+  assert.equal(extra([{ name: 'Detox Shot', qty: 1 }]), 0);                                      // kampanyasız ürün
+  assert.equal(extra([{ name: 'Coconut Mix', qty: 1 }], 'Diğer Mağaza'), 0);                     // başka mağaza
+});
+
 await test('Excel ürün hücresi ayrıştırma', async () => {
   const { parseItems } = await import('../public/assets/js/core/sheets.js');
   assert.deepEqual(parseItems('Okyanus Oda Kokusu OK, one size x1, Lavanta Oda Kokusu LK, one size x2', 3), [

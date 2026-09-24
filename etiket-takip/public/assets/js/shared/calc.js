@@ -51,6 +51,8 @@ export function normCampaign(c) {
     productMode: c.productMode === 'exclude' ? 'exclude' : 'include',
     condition: c.condition || 'qty',
     minQty: Math.max(1, +c.minQty || 1),
+    maxQty: Math.max(0, +c.maxQty || 0),
+    pureOnly: !!c.pureOnly,
     minAmount: Math.max(0, +c.minAmount || 0),
     maxPerOrder: Math.max(0, +c.maxPerOrder || 0),
     mode: c.mode === 'once' ? 'once' : 'every',
@@ -89,12 +91,17 @@ export function computeOrder(o, ctx) {
   const counts = new Map();
   for (const l of lines) if (l.productId) counts.set(l.productId, (counts.get(l.productId) || 0) + l.units);
 
+  // Siparişteki farklı ürün sayısı (eşleşmeyen satırlar da ayrı ürün sayılır, yoksayılanlar sayılmaz)
+  const distinctInOrder = counts.size + new Set(lines.filter((l) => !l.productId && !l.ignored).map((l) => l.raw)).size;
+
   const rewards = [];
   for (const c of ctx.campaigns) {
     if (!campaignApplies(c, o, store, platform)) continue;
     const eligible = [...counts.keys()].filter((id) => productEligible(c, id));
     if (!eligible.length) continue;
-    const times = (q, min) => (q < min ? 0 : c.mode === 'once' ? 1 : Math.floor(q / min));
+    // Karışık siparişte uygulanmaz: sipariş tek çeşit üründen oluşmalı
+    if (c.pureOnly && distinctInOrder !== 1) continue;
+    const times = (q, min) => (q < min || (c.maxQty && q > c.maxQty) ? 0 : c.mode === 'once' ? 1 : Math.floor(q / min));
     const out = [];
     const give = (t, sameAs) => {
       if (!t) return;

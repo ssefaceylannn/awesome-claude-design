@@ -92,6 +92,8 @@ const SANITIZE = {
         condition: ['qty', 'distinct', 'amount', 'order'].includes(c.condition) ? c.condition : 'qty',
         minAmount: Math.max(0, Math.min(1e9, parseFloat(c.minAmount) || 0)),
         maxPerOrder: int(c.maxPerOrder, 0, 99999, 0),
+        maxQty: int(c.maxQty, 0, 9999, 0),
+        pureOnly: !!c.pureOnly,
         rewards: (Array.isArray(c.rewards) ? c.rewards : [])
           .map((r) => ({ productId: r && r.productId && id(r.productId) ? r.productId : '', qty: int(r && r.qty, 1, 9999, 1) }))
           .slice(0, 20),
@@ -134,6 +136,8 @@ const SANITIZE = {
           minQty: int(r.minQty, 1, 9999, 1),
           minAmount: Math.max(0, parseFloat(r.minAmount) || 0),
           maxPerOrder: int(r.maxPerOrder, 0, 99999, 0),
+          maxQty: int(r.maxQty, 0, 9999, 0),
+          pureOnly: !!r.pureOnly,
           rewardSame: r.rewardSame !== false,
           rewardQty: int(r.rewardQty, 1, 9999, 1),
         },

@@ -6,6 +6,7 @@ import { normCampaign } from '../shared/calc.js';
 
 /** Hazır kampanya türleri. rule alanları formu doldurur. */
 export const BUILTIN_TYPES = [
+  { id: 'second_1tl', name: '2. ürün 1 TL (tek ürünlü, 1 adetlik siparişe +1 aynı üründen)', rule: { condition: 'qty', countMode: 'each', mode: 'once', minQty: 1, maxQty: 1, pureOnly: true, rewardSame: true, rewardQty: 1 } },
   { id: 'bogo', name: 'X alana Y bedava (aynı üründen)', rule: { condition: 'qty', countMode: 'each', mode: 'every', minQty: 2, rewardSame: true, rewardQty: 1 } },
   { id: 'gift_every', name: 'Her X adette hediye ürün', rule: { condition: 'qty', countMode: 'each', mode: 'every', minQty: 1, rewardSame: false, rewardQty: 1 } },
   { id: 'gift_once', name: 'En az X adet alana bir kez hediye', rule: { condition: 'qty', countMode: 'each', mode: 'once', minQty: 1, rewardSame: false, rewardQty: 1 } },
@@ -51,6 +52,8 @@ export function describe(raw) {
   else if (c.condition === 'distinct') s = every ? `${scope} arasından her ${c.minQty} farklı ürün için ${reward}` : `${scope} arasından en az ${c.minQty} farklı ürün alana bir kez ${reward}`;
   else if (c.countMode === 'sum') s = every ? `${scope} toplamında her ${c.minQty} adette ${reward}` : `${scope} toplamı en az ${c.minQty} adet olan siparişe bir kez ${reward}`;
   else s = every ? `${scope}: her ${c.minQty} adette ${reward}${c.triggerProductIds.length !== 1 ? ' (her ürün ayrı sayılır)' : ''}` : `${scope}: en az ${c.minQty} adet alana bir kez ${reward}${c.triggerProductIds.length !== 1 ? ' (her ürün ayrı)' : ''}`;
+  if (c.maxQty) s += ` · ${c.maxQty} adetten fazla alınırsa uygulanmaz`;
+  if (c.pureOnly) s += ' · karışık siparişte (başka ürün varsa) uygulanmaz';
   if (c.maxPerOrder) s += ` · sipariş başına en fazla ${c.maxPerOrder} adet`;
   return s;
 }
@@ -129,7 +132,9 @@ async function campaignForm(camp, { copy = false } = {}) {
           <label class="f" data-show="amount">En az tutar (TL) <span class="hint">Tutar yalnızca Excel yüklemelerinde bulunur</span><input class="input" type="number" name="minAmount" min="0" step="0.01" value="${c.minAmount || ''}"></label>
           <label class="f" data-show="qty distinct amount">Uygulama şekli<select class="input" name="mode"><option value="every" ${c.mode === 'every' ? 'selected' : ''}>Katlanarak (her X'te bir)</option><option value="once" ${c.mode === 'once' ? 'selected' : ''}>Sipariş başına bir kez</option></select></label>
           <label class="f" data-show="qty">Ürünler nasıl sayılsın?<select class="input" name="countMode"><option value="each" ${c.countMode !== 'sum' ? 'selected' : ''}>Her ürün ayrı sayılır</option><option value="sum" ${c.countMode === 'sum' ? 'selected' : ''}>Seçili ürünlerin toplamı (karışık sepet)</option></select></label>
+          <label class="f" data-show="qty distinct">En fazla kaç <span class="hint">Bu sayıdan fazla alınırsa kampanya uygulanmaz · 0 = sınır yok</span><input class="input" type="number" name="maxQty" min="0" value="${c.maxQty || 0}"></label>
           <label class="f">Sipariş başına en fazla hediye <span class="hint">0 = sınır yok</span><input class="input" type="number" name="maxPerOrder" min="0" value="${c.maxPerOrder || 0}"></label>
+          <label class="switch full"><input type="checkbox" name="pureOnly" ${c.pureOnly ? 'checked' : ''}> Karışık siparişte uygulanmaz <span class="muted small">(siparişte başka bir ürün de varsa hediye gönderilmez)</span></label>
         </div>
       </fieldset>
       <fieldset class="fieldset"><legend>4 · Eklenecek ürün(ler)</legend>
@@ -175,6 +180,8 @@ async function campaignForm(camp, { copy = false } = {}) {
           mode: f('mode').value,
           countMode: f('countMode').value,
           maxPerOrder: Math.max(0, parseInt(f('maxPerOrder').value, 10) || 0),
+          maxQty: Math.max(0, parseInt(f('maxQty').value, 10) || 0),
+          pureOnly: f('pureOnly').checked,
           start: f('start').value,
           end: f('end').value,
           active: f('active').checked,
@@ -190,8 +197,8 @@ async function campaignForm(camp, { copy = false } = {}) {
         let sim = '';
         if (c.condition === 'qty' || c.condition === 'distinct') {
           const per = c.rewards.reduce((s, r) => s + r.qty, 0);
-          const rows = [1, 2, 3, 4, 5, 6, 8, 10].map((q) => { let t = q < c.minQty ? 0 : c.mode === 'once' ? 1 : Math.floor(q / c.minQty); let r = t * per; if (c.maxPerOrder) r = Math.min(r, c.maxPerOrder); return [q, r]; });
-          sim = html`<div class="row wrap" style="gap:6px">${rows.map(([q, r]) => html`<span class="chip static">${q} ${c.condition === 'distinct' ? 'çeşit' : 'adet'} → <b class="${r ? 'gift' : 'muted'}">+${r}</b></span>`)}</div>`;
+          const rows = [1, 2, 3, 4, 5, 6, 8, 10].map((q) => { let t = q < c.minQty || (c.maxQty && q > c.maxQty) ? 0 : c.mode === 'once' ? 1 : Math.floor(q / c.minQty); let r = t * per; if (c.maxPerOrder) r = Math.min(r, c.maxPerOrder); return [q, r]; });
+          sim = html`${c.pureOnly ? html`<div class="xs" style="margin-bottom:6px">Yalnızca tek çeşit ürün içeren siparişler için (karışık siparişte +0):</div>` : ''}<div class="row wrap" style="gap:6px">${rows.map(([q, r]) => html`<span class="chip static">${q} ${c.condition === 'distinct' ? 'çeşit' : 'adet'} → <b class="${r ? 'gift' : 'muted'}">+${r}</b></span>`)}</div>`;
         }
         mount(d.querySelector('#pvTable'), html`${sim}<div class="muted xs" style="margin-top:6px">Kapsam: ${scopeText(c)} · ${c.start ? trDate(c.start) : 'başlangıç yok'} – ${c.end ? trDate(c.end) : 'süresiz'}</div>`);
       };
@@ -201,6 +208,7 @@ async function campaignForm(camp, { copy = false } = {}) {
         const fl = ruleToFields(t.rule);
         f('condition').value = fl.condition; f('minQty').value = fl.minQty; f('minAmount').value = fl.minAmount || '';
         f('mode').value = fl.mode; f('countMode').value = fl.countMode; f('maxPerOrder').value = fl.maxPerOrder || 0;
+        f('maxQty').value = fl.maxQty || 0; f('pureOnly').checked = !!fl.pureOnly;
         c.rewards = fl.rewards;
         if (tid === 'bundle' && c.rewards.length < 2) c.rewards.push({ productId: '', qty: 1 });
         drawRewards();
@@ -225,7 +233,7 @@ async function campaignForm(camp, { copy = false } = {}) {
       d.querySelector('#addReward').addEventListener('click', () => { c.rewards.push({ productId: '', qty: 1 }); drawRewards(); preview(); });
       d.querySelector('#saveType').addEventListener('click', async () => {
         read();
-        const t = await saveTemplate({ condition: c.condition, mode: c.mode, countMode: c.countMode, minQty: c.minQty, minAmount: c.minAmount, maxPerOrder: c.maxPerOrder, rewardSame: !c.rewards[0].productId, rewardQty: c.rewards[0].qty });
+        const t = await saveTemplate({ condition: c.condition, mode: c.mode, countMode: c.countMode, minQty: c.minQty, minAmount: c.minAmount, maxPerOrder: c.maxPerOrder, maxQty: c.maxQty, pureOnly: c.pureOnly, rewardSame: !c.rewards[0].productId, rewardQty: c.rewards[0].qty });
         if (t) { c.templateId = t.id; mount(f('templateId'), typeOptions()); f('templateId').value = t.id; toast('Kampanya türü eklendi', 'ok'); }
       });
       d.addEventListener('input', (e) => { if (!e.target.closest('#rewards')) preview(); });
@@ -254,7 +262,7 @@ async function campaignForm(camp, { copy = false } = {}) {
 function ruleToFields(r) {
   return {
     condition: r.condition || 'qty', mode: r.mode || 'every', countMode: r.countMode || 'each',
-    minQty: r.minQty || 1, minAmount: r.minAmount || 0, maxPerOrder: r.maxPerOrder || 0,
+    minQty: r.minQty || 1, minAmount: r.minAmount || 0, maxPerOrder: r.maxPerOrder || 0, maxQty: r.maxQty || 0, pureOnly: !!r.pureOnly,
     rewards: [{ productId: '', qty: r.rewardQty || 1 }],
     ...(r.rewardSame === false ? { rewards: [{ productId: (state.config.products[0] || {}).id || '', qty: r.rewardQty || 1 }] } : {}),
   };
@@ -301,8 +309,8 @@ export default async function campaignsPage(ctx) {
         <div class="tabs">${TABS.map(([k, l]) => html`<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${l} <span class="muted">${counts[k]}</span></button>`)}
           <button data-tab="types" class="${tab === 'types' ? 'on' : ''}">Kampanya türleri <span class="muted">${BUILTIN_TYPES.length + templates.length}</span></button></div>
         ${tab === 'types' ? html`<div class="tw"><table class="t"><thead><tr>${admin ? selTh() : ''}<th>Tür</th><th>Kural</th><th>Kaynak</th></tr></thead><tbody>
-          ${BUILTIN_TYPES.filter((t) => t.rule).map((t) => html`<tr>${admin ? html`<td class="sel"></td>` : ''}<td><b>${t.name}</b></td><td class="small muted">${COND_LABEL[t.rule.condition]} · ${t.rule.mode === 'once' ? 'bir kez' : 'katlanarak'}${t.rule.condition === 'qty' ? ` · ${t.rule.countMode === 'sum' ? 'toplam' : 'ürün başına'}` : ''}</td><td><span class="badge">Hazır</span></td></tr>`)}
-          ${templates.map((t) => html`<tr>${admin ? selTd(t.id, tsel) : ''}<td><b>${t.name}</b>${t.description ? html`<div class="muted xs">${t.description}</div>` : ''}</td><td class="small muted">${COND_LABEL[t.rule.condition]} · ${t.rule.mode === 'once' ? 'bir kez' : 'katlanarak'} · en az ${t.rule.condition === 'amount' ? n(t.rule.minAmount) + ' TL' : t.rule.minQty} · +${t.rule.rewardQty} ${t.rule.rewardSame ? 'aynı üründen' : 'hediye ürün'}</td><td><span class="badge violet">Sizin</span></td></tr>`)}
+          ${BUILTIN_TYPES.filter((t) => t.rule).map((t) => html`<tr>${admin ? html`<td class="sel"></td>` : ''}<td><b>${t.name}</b></td><td class="small muted">${COND_LABEL[t.rule.condition]} · ${t.rule.mode === 'once' ? 'bir kez' : 'katlanarak'}${t.rule.condition === 'qty' ? ` · ${t.rule.countMode === 'sum' ? 'toplam' : 'ürün başına'}` : ''}${t.rule.pureOnly ? ' · karışıkta yok' : ''}${t.rule.maxQty ? ` · en fazla ${t.rule.maxQty}` : ''}</td><td><span class="badge">Hazır</span></td></tr>`)}
+          ${templates.map((t) => html`<tr>${admin ? selTd(t.id, tsel) : ''}<td><b>${t.name}</b>${t.description ? html`<div class="muted xs">${t.description}</div>` : ''}</td><td class="small muted">${COND_LABEL[t.rule.condition]} · ${t.rule.mode === 'once' ? 'bir kez' : 'katlanarak'}${t.rule.pureOnly ? ' · karışıkta yok' : ''}${t.rule.maxQty ? ` · en fazla ${t.rule.maxQty}` : ''} · en az ${t.rule.condition === 'amount' ? n(t.rule.minAmount) + ' TL' : t.rule.minQty} · +${t.rule.rewardQty} ${t.rule.rewardSame ? 'aynı üründen' : 'hediye ürün'}</td><td><span class="badge violet">Sizin</span></td></tr>`)}
           </tbody></table></div>
           <div class="card-f small muted">Yeni tür eklemek için kampanya formunda kuralı ayarlayıp “Yeni tür” düğmesine basın. Hazır türler silinemez.</div>
           ${admin ? bulkBar() : ''}` : html`
