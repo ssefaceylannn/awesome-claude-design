@@ -90,6 +90,7 @@ export default async function ordersPage(ctx) {
   function filtered() {
     const ql = q.toLocaleLowerCase('tr-TR').trim();
     return R.computed.filter((c) => {
+      if (c.order.summary) return false; // arşiv özeti: sipariş detayı yok
       const o = c.order;
       if (status === 'camp' && !c.rewards.length) return false;
       if (status === 'unm' && !c.lines.some((l) => !l.productId && !l.ignored)) return false;
@@ -107,16 +108,17 @@ export default async function ordersPage(ctx) {
     const pages = Math.max(1, Math.ceil(list.length / PAGE));
     page = Math.min(page, pages - 1);
     const shown = list.slice(page * PAGE, page * PAGE + PAGE);
+    const real = R.computed.filter((c) => !c.order.summary);
     const cnt = {
-      all: R.computed.length,
-      camp: R.computed.filter((c) => c.rewards.length).length,
-      unm: R.computed.filter((c) => c.lines.some((l) => !l.productId && !l.ignored)).length,
-      open: R.computed.filter((c) => !c.order.checked).length,
-      done: R.computed.filter((c) => c.order.checked).length,
-      multi: R.computed.filter((c) => c.order.pages > 1).length,
+      all: real.length,
+      camp: real.filter((c) => c.rewards.length).length,
+      unm: real.filter((c) => c.lines.some((l) => !l.productId && !l.ignored)).length,
+      open: real.filter((c) => !c.order.checked).length,
+      done: real.filter((c) => c.order.checked).length,
+      multi: real.filter((c) => c.order.pages > 1).length,
     };
     ctx.setSub(`${rangeLabel(from, to)} · ${filterLabel(filter)} · ${n(list.length)} sipariş`);
-    mount($('#body'), html`<div class="card">
+    mount($('#body'), html`${R.archiveDays && R.archiveDays.size ? html`<div class="callout info" style="margin-bottom:16px">${icon('history')}<div class="c"><b>Bu aralıkta ${R.archiveDays.size} gün eski sistemden aktarılan arşiv özeti</b>Bu günlerin sipariş detayı yoktur; ürün ve kampanya toplamları Üretim Listesi, Günlük Arşiv ve Genel Bakış'ta görünür.</div></div>` : ''}<div class="card" id="oCard">
       <div class="tabs">${[['all', 'Tümü'], ['camp', 'Kampanyalı'], ['unm', 'Eşleşmeyen ürünlü'], ['open', 'Kontrol bekleyen'], ['done', 'Kontrol edilen'], ['multi', 'Devam etiketli']].map(([k, l]) => html`<button data-s="${k}" class="${status === k ? 'on' : ''}">${l} <span class="muted">${cnt[k]}</span></button>`)}</div>
       <div class="tw"><table class="t"><thead><tr>${can('personel') ? selTh() : ''}<th>Tarih</th><th>Sipariş no</th><th>Mağaza</th><th>Alıcı</th><th>Ürünler</th><th>Kampanya</th><th>Kontrol</th></tr></thead><tbody>
       ${shown.length ? shown.map((c) => {
@@ -135,7 +137,7 @@ export default async function ordersPage(ctx) {
       ${can('personel') ? bulkBar() : ''}
     </div>`);
     if (!can('personel')) return;
-    const card = $('#body').firstElementChild;
+    const card = $('#oCard');
     const acts = [{ id: 'check', label: 'Kontrol edildi yap', icon: 'check' }, { id: 'uncheck', label: 'Kontrolü kaldır' }];
     if (isAdmin()) acts.push({ id: 'del', label: 'Sil', icon: 'trash', danger: true });
     wireBulk(card, sel, acts, async (a, ids) => {

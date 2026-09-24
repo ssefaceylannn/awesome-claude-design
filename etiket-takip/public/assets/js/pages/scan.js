@@ -42,7 +42,7 @@ export default async function scanPage(ctx) {
 
   async function load() {
     ctx.setSub(trDate(day, true));
-    try { orders = await fetchOrders(addDays(day, -2), day); } catch (e) { toast(e.message, 'err'); orders = []; }
+    try { orders = (await fetchOrders(addDays(day, -2), day)).filter((o) => !o.summary); } catch (e) { toast(e.message, 'err'); orders = []; }
     renderList();
   }
 

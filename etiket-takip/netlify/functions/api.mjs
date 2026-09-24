@@ -65,6 +65,7 @@ const SANITIZE = {
         id: p.id,
         name: str(p.name, 120) || 'Adsız ürün',
         sku: str(p.sku, 60),
+        brand: str(p.brand, 60),
         category: str(p.category, 60),
         unit: str(p.unit, 20) || 'adet',
         keywords: str(p.keywords, 1000),
@@ -287,6 +288,9 @@ async function importOrders(req, user) {
     const bucket = buckets.get(bucketKey(o.orderNo));
     let existingDate = bucket[k];
     let existingKey = k;
+    if (!existingDate && /^\d{10,}$/.test(o.orderNo) && bucket['legacy|' + o.orderNo]) {
+      return { i, k, status: 'dup', existingDate: bucket['legacy|' + o.orderNo], note: `Eski sistemde ${bucket['legacy|' + o.orderNo]} tarihinde kaydedilmiş` };
+    }
     if (!existingDate && /^\d{12,}$/.test(o.orderNo)) {
       // Uzun kargo takip numarası tekildir: PDF'te gönderici adı Excel'deki mağaza adından farklı olsa da aynı paket
       const other = Object.keys(bucket).find((x) => x.endsWith('|' + o.orderNo));
@@ -629,6 +633,44 @@ export default async (req) => {
       return json({ result: await maybeCleanup(user, true) });
     }
 
+    // Eski sistemin (Kampanya Hesaplama) sipariş numaraları: yalnızca mükerrer kontrolü için
+    if (path === 'legacy/index' && m === 'POST') {
+      need(user, 'admin');
+      const b = await body(req);
+      const entries = (Array.isArray(b.entries) ? b.entries : []).filter((e) => Array.isArray(e) && /^\d{10,30}$/.test(String(e[0])) && isYmd(e[1])).slice(0, 30000);
+      const byBucket = new Map();
+      for (const [no, date] of entries) { const bk = bucketKey(no); if (!byBucket.has(bk)) byBucket.set(bk, []); byBucket.get(bk).push([String(no), date]); }
+      let added = 0;
+      await pmap([...byBucket.entries()], 12, ([bk, list]) =>
+        update(bk, (idx) => {
+          let ch = false;
+          for (const [no, date] of list) if (!idx['legacy|' + no]) { idx['legacy|' + no] = date; added++; ch = true; }
+          return ch ? idx : undefined;
+        }, {}),
+      );
+      if (b.final) await audit(user, 'eski sistem aktarımı', str(b.summary, 400));
+      return json({ added });
+    }
+
+    // Aktarılan arşiv özetlerini kaldır
+    if (path === 'legacy/remove' && m === 'POST') {
+      need(user, 'admin');
+      const keys = await listKeys('day/');
+      let removed = 0;
+      await pmap(keys, 8, (k) =>
+        update(k, (day) => {
+          if (!day) return undefined;
+          const keep = day.orders.filter((o) => !o.summary);
+          if (keep.length === day.orders.length) return undefined;
+          removed += day.orders.length - keep.length;
+          day.orders = keep;
+          return day;
+        }),
+      );
+      await audit(user, 'arşiv özetleri silindi', `${removed} kayıt`);
+      return json({ removed });
+    }
+
     // Yedek: ay ay indirilir (Netlify yanıt boyutu sınırı nedeniyle)
     if (path === 'backup' && m === 'GET') {
       need(user, 'admin');
@@ -661,7 +703,7 @@ export default async (req) => {
           return day;
         }, () => ({ date: d.date, orders: [] }));
         const byBucket = new Map();
-        for (const o of d.orders) { if (!o || !o.k) continue; const bk = bucketKey(o.no ?? o.k.split('|').pop()); if (!byBucket.has(bk)) byBucket.set(bk, []); byBucket.get(bk).push(o.k); }
+        for (const o of d.orders) { if (!o || !o.k || o.summary) continue; const bk = bucketKey(o.no ?? o.k.split('|').pop()); if (!byBucket.has(bk)) byBucket.set(bk, []); byBucket.get(bk).push(o.k); }
         await pmap([...byBucket.entries()], 12, ([bk, ks]) => update(bk, (idx) => { for (const k of ks) if (!idx[k]) idx[k] = d.date; return idx; }, {}));
       }
       if (b.config || restored) await audit(user, 'yedekten geri yükleme', `${restored} sipariş${b.config ? ' + ayarlar' : ''}`);

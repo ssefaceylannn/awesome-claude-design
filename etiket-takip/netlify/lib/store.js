@@ -1,17 +1,15 @@
 // Netlify Blobs erişimi + iyimser eşzamanlılık (etag) ile güvenli güncelleme.
 import { getStore } from '@netlify/blobs';
 
-let cached = null;
-
+// Not: Netlify her istekte Blobs'a kısa ömürlü bir erişim anahtarı verir. Store nesnesi
+// modül düzeyinde saklanırsa sıcak kalan fonksiyon süresi dolmuş anahtarı kullanır
+// ("Failed to decode token: Token expired"). Bu yüzden her çağrıda yeniden alınır (ucuz bir işlem).
 export function store() {
-  if (cached) return cached;
   if (process.env.BLOBS_LOCAL_URL) {
     // Yerel geliştirme / test (scripts/dev-server.mjs)
-    cached = getStore({ name: 'etiket-takip', siteID: 'local', token: 'dev', apiURL: process.env.BLOBS_LOCAL_URL });
-  } else {
-    cached = getStore({ name: 'etiket-takip', consistency: 'strong' });
+    return getStore({ name: 'etiket-takip', siteID: 'local', token: 'dev', apiURL: process.env.BLOBS_LOCAL_URL });
   }
-  return cached;
+  return getStore({ name: 'etiket-takip', consistency: 'strong' });
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

@@ -175,3 +175,29 @@ export async function exportTable(name, sheetTitle, columns, rows) {
   const buf = await wb.xlsx.writeBuffer();
   download(name, new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
 }
+
+/**
+ * Sabit sıralı liste: katalogdaki TÜM ürünler, Ürünler sayfasındaki sırayla, 0 olanlar dahil.
+ * Başka bir tabloya yapıştırmak için: ilk satır başlık, ürün satırları hep aynı yerde.
+ */
+export async function exportFixedList({ R, ctx, from, to, filterLabel }) {
+  const ExcelJS = await lib();
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Liste', { views: [{ state: 'frozen', ySplit: 1 }] });
+  ws.columns = [{ width: 48 }, { width: 20 }];
+  const head = ws.getRow(1);
+  head.values = ['Ürün', 'Gönderilecek Adet'];
+  head.font = { bold: true };
+  ctx.products.forEach((p, i) => {
+    const a = R.products.get(p.id);
+    ws.getRow(i + 2).values = [p.name, a ? a.labelUnits + a.campaignUnits : 0];
+  });
+  // Bilgi ayrı sayfada: yapıştırılan tablonun satırları kaymasın
+  const info = wb.addWorksheet('Bilgi');
+  info.columns = [{ width: 24 }, { width: 60 }];
+  [['Tarih', rangeLabel(from, to)], ['Kapsam', filterLabel], ['Sipariş', R.orders], ['Ürün sayısı', ctx.products.length], ['Oluşturma', trDateTime(new Date().toISOString())]]
+    .forEach((r, i) => { info.getRow(i + 1).values = r; });
+  const buf = await wb.xlsx.writeBuffer();
+  const stamp = from === to ? from : `${from}_${to}`;
+  download(`sabit-liste_${stamp}.xlsx`, new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+}

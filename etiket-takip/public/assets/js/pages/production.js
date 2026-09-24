@@ -1,9 +1,9 @@
 // Üretim / sevk listesi: katalog sırasına göre gönderilecek adetler.
-import { html, mount, icon, n, pct, toast, busy, emptyState, rangeLabel, esc, pBadge } from '../core/ui.js';
+import { html, mount, icon, n, pct, toast, busy, emptyState, rangeLabel, esc, pBadge, multiSelect, collator } from '../core/ui.js';
 import { state, fetchOrders, getRange } from '../core/api.js';
 import { aggregate, productionRows } from '../shared/calc.js';
 import { rangePicker, storeFilters, filterLabel } from '../core/widgets.js';
-import { exportProduction } from '../core/excel.js';
+import { exportProduction, exportFixedList } from '../core/excel.js';
 
 export default async function productionPage(ctx) {
   let { from, to } = getRange();
@@ -11,14 +11,30 @@ export default async function productionPage(ctx) {
   let includeZero = localStorage.getItem('et-zero') === '1';
   let view = 'list';
   let R = null;
+  // Ekran görünümü (Excel "sabit liste"yi etkilemez)
+  let sortKey = 'catalog', sortDir = 1, q = '', cats = [], onlyCamp = false;
 
-  mount(ctx.actions, html`<button class="btn" id="printBtn">${icon('printer')}Yazdır</button><button class="btn primary" id="xls">${icon('sheet')}Excel indir</button>`);
+  mount(ctx.actions, html`<button class="btn" id="printBtn">${icon('printer')}Yazdır</button>
+    <div class="ms" id="xlsWrap" style="position:relative"><button class="btn primary" id="xls">${icon('sheet')}Excel indir ${icon('chevD')}</button></div>`);
   mount(ctx.el, html`<div class="stack">
     <div class="card"><div class="card-b row wrap" style="gap:12px">
       <div id="range"></div>
       <div id="fStores" style="width:210px"></div>
       <div id="fPf" style="width:180px"></div>
       <label class="switch small"><input type="checkbox" id="zero" ${includeZero ? 'checked' : ''}> Satışı olmayan ürünleri de göster</label>
+    </div>
+    <div class="card-f row wrap" style="gap:10px">
+      <div class="search" style="width:240px;max-width:100%">${icon('search')}<input class="input sm" id="q" placeholder="Ürün ara…"></div>
+      <div id="fCat" style="width:200px"></div>
+      <label class="check small"><input type="checkbox" id="onlyCamp"> Sadece kampanyalı ürünler</label>
+      <select class="input sm" id="sort" style="width:auto">
+        <option value="catalog">Sıralama: katalog sırası</option>
+        <option value="name:1">Ürün adı A → Z</option><option value="name:-1">Ürün adı Z → A</option>
+        <option value="total:-1">Gönderilecek: çok → az</option><option value="total:1">Gönderilecek: az → çok</option>
+        <option value="label:-1">Etiket adedi: çok → az</option><option value="camp:-1">Kampanya: çok → az</option>
+        <option value="orders:-1">Sipariş sayısı: çok → az</option><option value="cat:1">Kategoriye göre</option>
+      </select>
+      <span class="muted xs">Sıralama ve filtre yalnızca ekranı etkiler.</span>
     </div></div>
     <div id="body"></div>
   </div>`);
@@ -27,6 +43,30 @@ export default async function productionPage(ctx) {
   rangePicker($('#range'), { onChange: (f, t) => { from = f; to = t; load(); } });
   filter = storeFilters($('#fStores'), $('#fPf'), (f) => { filter = f; load(); });
   $('#zero').addEventListener('change', (e) => { includeZero = e.target.checked; localStorage.setItem('et-zero', includeZero ? '1' : '0'); render(); });
+  const allCats = [...new Set(state.config.products.map((p) => p.category).filter(Boolean))].sort(collator.compare);
+  multiSelect($('#fCat'), { options: allCats.map((c) => ({ id: c, label: c })), allLabel: 'Tüm kategoriler', onChange: (v) => { cats = v; render(); } });
+  $('#q').addEventListener('input', (e) => { q = e.target.value.toLocaleLowerCase('tr-TR').trim(); render(); });
+  $('#onlyCamp').addEventListener('change', (e) => { onlyCamp = e.target.checked; render(); });
+  $('#sort').addEventListener('change', (e) => { const [k, d] = e.target.value.split(':'); sortKey = k; sortDir = +d || 1; render(); });
+
+  /** Ekranda gösterilecek satırlar: filtre + sıralama */
+  function viewRows() {
+    let rows = productionRows(R, state.ctx, { includeZero });
+    rows.forEach((r, i) => { r.pos = i + 1; });
+    if (q) rows = rows.filter((r) => r.product.name.toLocaleLowerCase('tr-TR').includes(q) || (r.product.sku || '').toLocaleLowerCase('tr-TR').includes(q));
+    if (cats.length) rows = rows.filter((r) => cats.includes(r.product.category));
+    if (onlyCamp) rows = rows.filter((r) => r.campaignUnits > 0);
+    const val = { name: (r) => r.product.name, total: (r) => r.total, label: (r) => r.labelUnits, camp: (r) => r.campaignUnits, orders: (r) => r.orders, cat: (r) => r.product.category || 'ÿ' };
+    if (sortKey !== 'catalog' && val[sortKey]) {
+      rows.sort((a, b) => {
+        const x = val[sortKey](a), y = val[sortKey](b);
+        const c = typeof x === 'string' ? collator.compare(x, y) : x - y;
+        return c * sortDir || a.pos - b.pos;
+      });
+    }
+    return rows;
+  }
+  const sortTh = (key, label, cls = '') => html`<th class="${cls}" data-sort="${key}" style="cursor:pointer;user-select:none" title="Sıralamak için tıklayın">${label}${sortKey === key ? (sortDir > 0 ? ' ▲' : ' ▼') : ''}</th>`;
 
   async function load() {
     mount($('#body'), html`<div class="loading"><div class="spin"></div><span>Hesaplanıyor…</span></div>`);
@@ -41,7 +81,7 @@ export default async function productionPage(ctx) {
   function render() {
     if (!R) return;
     ctx.setSub(`${rangeLabel(from, to)} · ${filterLabel(filter)}`);
-    const rows = productionRows(R, state.ctx, { includeZero });
+    const rows = viewRows();
     const unmatchedUnits = [...R.unmatched.values()].reduce((s, u) => s + u.units, 0);
     const maxT = Math.max(1, ...rows.map((r) => r.total));
     const stores = [...R.stores.values()];
@@ -54,13 +94,14 @@ export default async function productionPage(ctx) {
         <div class="kpi"><div class="l">${icon('gift')}Kampanyayla eklenen</div><div class="v">${n(R.campaignUnits)}</div><div class="s">${R.campaigns.size} kampanya</div></div>
         <div class="kpi hl"><div class="l">${icon('factory')}Toplam gönderilecek</div><div class="v">${n(R.totalUnits - unmatchedUnits)}</div><div class="s">${unmatchedUnits ? `+${n(unmatchedUnits)} eşleşmeyen adet hariç` : 'etiket + kampanya'}</div></div>
       </div>
+      ${R.archiveDays && R.archiveDays.size ? html`<div class="callout info">${icon('history')}<div class="c"><b>${R.archiveDays.size} gün eski sistemden aktarılan arşiv özeti içeriyor</b>Bu günlerin adetleri eski sistemin kaydettiği gibidir (kampanyalar yeniden hesaplanmaz); kampanyalı sipariş sayısı bu günler için bilinmiyor.</div></div>` : ''}
       ${R.unmatched.size ? html`<div class="callout warn">${icon('alert')}<div class="c"><b>${R.unmatched.size} ürün adı (${n(unmatchedUnits)} adet) katalogla eşleşmediği için listede yok</b>
         ${[...R.unmatched.values()].slice(0, 6).map((u) => u.raw).join(' · ')}${R.unmatched.size > 6 ? ' …' : ''} — <a href="#/matching">Ürün Eşleştirme</a> sayfasından atayın, liste anında güncellenir.</div></div>` : ''}
       <div class="card">
         <div class="tabs">${[['list', 'Üretim listesi'], ['matrix', 'Mağaza × ürün'], ['stores', 'Mağaza özeti'], ['camps', 'Kampanyalar']].map(([k, l]) => html`<button data-v="${k}" class="${view === k ? 'on' : ''}">${l}</button>`)}</div>
-        ${view === 'list' ? html`<div class="tw"><table class="t"><thead><tr><th class="num">#</th><th>Ürün</th><th class="hide-m">Kategori</th><th class="num">Etiket</th><th class="num">Kamp.</th><th class="num">Gönderilecek</th><th class="num hide-m">Sipariş</th><th class="hide-m" style="width:22%"></th></tr></thead><tbody>
-          ${rows.length ? rows.map((r, i) => html`<tr class="${r.total ? '' : 'muted'}">
-            <td class="num muted">${i + 1}</td><td><b>${r.product.name}</b></td><td class="hide-m">${r.product.category ? html`<span class="badge">${r.product.category}</span>` : ''}</td>
+        ${view === 'list' ? html`<div class="tw"><table class="t"><thead><tr>${sortTh('catalog', '#', 'num')}${sortTh('name', 'Ürün')}${sortTh('cat', 'Kategori', 'hide-m')}${sortTh('label', 'Etiket', 'num')}${sortTh('camp', 'Kamp.', 'num')}${sortTh('total', 'Gönderilecek', 'num')}${sortTh('orders', 'Sipariş', 'num hide-m')}<th class="hide-m" style="width:22%"></th></tr></thead><tbody>
+          ${rows.length ? rows.map((r) => html`<tr class="${r.total ? '' : 'muted'}">
+            <td class="num muted" title="Katalog sırası">${r.pos}</td><td><b>${r.product.name}</b></td><td class="hide-m">${r.product.category ? html`<span class="badge">${r.product.category}</span>` : ''}</td>
             <td class="num">${n(r.labelUnits)}</td><td class="num">${r.campaignUnits ? html`<span class="gift">+${n(r.campaignUnits)}</span>` : html`<span class="muted">—</span>`}</td>
             <td class="num big">${n(r.total)}</td><td class="num hide-m">${n(r.orders)}</td>
             <td class="hide-m"><div class="progress" style="height:6px"><i style="width:${(r.total / maxT) * 100}%"></i></div></td></tr>`)
@@ -79,18 +120,69 @@ export default async function productionPage(ctx) {
       </div>
     </div>`);
     $('#body').querySelectorAll('[data-v]').forEach((b) => b.addEventListener('click', () => { view = b.dataset.v; render(); }));
+    $('#body').querySelectorAll('[data-sort]').forEach((th) => th.addEventListener('click', () => {
+      const k = th.dataset.sort;
+      if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = k === 'name' || k === 'cat' || k === 'catalog' ? 1 : -1; }
+      if (k === 'catalog') sortDir = 1;
+      const opt = [...$('#sort').options].find((o) => o.value === (k === 'catalog' ? 'catalog' : `${k}:${sortDir}`));
+      $('#sort').value = opt ? opt.value : 'catalog';
+      render();
+    }));
   }
 
-  ctx.actions.querySelector('#xls').addEventListener('click', async (e) => {
+  // Sabit sıra: katalogdaki tüm ürünler, 0'lar dahil (ekran sıralaması/filtresi etkilemez)
+  const fixedValues = () => state.ctx.products.map((p) => { const a = R.products.get(p.id); return [p.name, a ? a.labelUnits + a.campaignUnits : 0]; });
+  async function copyText(text, msg) {
+    try { await navigator.clipboard.writeText(text); toast(msg, 'ok'); }
+    catch { // izin yoksa eski yöntem
+      const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); ta.remove(); toast(msg, 'ok');
+    }
+  }
+  const wrap = ctx.actions.querySelector('#xlsWrap');
+  let menu = null;
+  const closeMenu = () => { if (menu) { menu.remove(); menu = null; } };
+  ctx.actions.querySelector('#xls').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (menu) return closeMenu();
     if (!R) return;
-    const btn = e.currentTarget;
-    busy(btn, true, 'Hazırlanıyor…');
-    try {
-      await exportProduction({ R, ctx: state.ctx, from, to, filterLabel: filterLabel(filter), includeZero, user: state.me.username, company: state.config.settings.companyName });
-      toast('Excel indirildi', 'ok');
-    } catch (err) { toast(err.message, 'err'); }
-    busy(btn, false);
+    menu = document.createElement('div');
+    menu.className = 'pop';
+    menu.style.cssText = 'right:0;left:auto;min-width:320px';
+    mount(menu, html`<div class="opts" style="margin:0">
+      <div class="opt" data-x="full">${icon('sheet')}<div><b>Detaylı rapor</b><div class="muted xs">Üretim listesi + mağaza, kampanya, sipariş sayfaları</div></div></div>
+      <div class="opt" data-x="fixed">${icon('sheet')}<div><b>Sabit sıralı liste (0'lar dahil)</b><div class="muted xs">Katalogdaki tüm ${state.ctx.products.length} ürün, Ürünler sayfasındaki sırayla · ekran sıralaması etkilemez</div></div></div>
+      <div class="grp">Panoya kopyala (sabit sıra, 0'lar dahil)</div>
+      <div class="opt" data-x="copyQty">${icon('copy')}<div><b>Yalnızca adetler</b><div class="muted xs">Tablonuzdaki adet sütununa doğrudan yapıştırın</div></div></div>
+      <div class="opt" data-x="copyBoth">${icon('copy')}<div><b>Ürün adı + adet</b><div class="muted xs">İki sütun olarak yapıştırılır</div></div></div>
+    </div>`);
+    wrap.appendChild(menu);
+    menu.addEventListener('click', async (ev) => {
+      const it = ev.target.closest('[data-x]');
+      if (!it) return;
+      const x = it.dataset.x;
+      closeMenu();
+      const btn = ctx.actions.querySelector('#xls');
+      try {
+        if (x === 'full') {
+          busy(btn, true, 'Hazırlanıyor…');
+          await exportProduction({ R, ctx: state.ctx, from, to, filterLabel: filterLabel(filter), includeZero, user: state.me.username, company: state.config.settings.companyName });
+          toast('Excel indirildi', 'ok');
+        } else if (x === 'fixed') {
+          busy(btn, true, 'Hazırlanıyor…');
+          await exportFixedList({ R, ctx: state.ctx, from, to, filterLabel: filterLabel(filter) });
+          toast('Sabit sıralı liste indirildi', 'ok');
+        } else if (x === 'copyQty') {
+          await copyText(fixedValues().map((r) => r[1]).join('\n'), `${state.ctx.products.length} satır adet kopyalandı`);
+        } else if (x === 'copyBoth') {
+          await copyText(fixedValues().map((r) => `${r[0]}\t${r[1]}`).join('\n'), `${state.ctx.products.length} satır kopyalandı`);
+        }
+      } catch (err) { toast(err.message, 'err'); }
+      busy(btn, false);
+    });
   });
+  const outside = (e) => { if (menu && !wrap.contains(e.target)) closeMenu(); };
+  document.addEventListener('mousedown', outside);
   ctx.actions.querySelector('#printBtn').addEventListener('click', () => {
     if (!R) return;
     const rows = productionRows(R, state.ctx, { includeZero });
@@ -104,4 +196,5 @@ export default async function productionPage(ctx) {
   });
 
   load();
+  return () => document.removeEventListener('mousedown', outside);
 }

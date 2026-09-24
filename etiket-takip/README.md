@@ -67,6 +67,22 @@ Excel'deki **Kargo Takip No**, etiket PDF'inin üstündeki numarayla aynıdır; 
 - Üzerinde “Devamı” yazan etiket bir önceki etiketin devamı sayılır; ürünleri o siparişe eklenir, ayrı sipariş sayılmaz. Önceki yüklemede kalmış bir siparişin devamı da doğru siparişe eklenir.
 - Aynı anda birden fazla personel yükleme yapsa bile aynı sipariş iki kez yazılmaz.
 
+## Üretim listesi: sıralama, filtre, sabit liste
+
+Ekranda sütun başlıklarına tıklayarak veya sıralama kutusundan sıralayabilir; ürün adı, kategori ve “sadece kampanyalı” ile filtreleyebilirsiniz (yalnızca ekranı etkiler). **Excel indir** menüsünde:
+- **Detaylı rapor** — üretim listesi + mağaza/kampanya/sipariş sayfaları
+- **Sabit sıralı liste (0'lar dahil)** — katalogdaki tüm ürünler, Ürünler sayfasındaki sırayla; ilk satır başlık, başka tabloya yapıştırmak için satırlar hiç kaymaz
+- **Panoya kopyala** — aynı sırayla yalnızca adetler veya ürün + adet
+
+## Eski sistemden (Kampanya Hesaplama) aktarım
+
+*Ayarlar → Yedekten geri yükle / eski sistemden aktar* ile eski JSON yedeği seçilir. Mevcut veriler silinmez:
+- Mağazalar, ürünler (SKU, marka, kategori, sıra) ve eski anahtar kelimeler eklenir; çok genel kelimeler (“one size” gibi) alınmaz.
+- Kampanya kuralları **durdurulmuş taslak** olarak eklenir; kontrol edip başlatın.
+- Her gün, eski sistemin kaydettiği ürün ve kampanya adetleriyle **arşiv özeti** olarak eklenir (günlük toplamlar birebir korunur, kampanyalar yeniden hesaplanmaz). Sitede zaten siparişi olan günler çift sayılmasın diye atlanır.
+- Eski sipariş numaraları mükerrer kontrolüne eklenir; eski bir etiket tekrar yüklenirse sayılmaz.
+- Aynı yedeği tekrar seçmek bir şeyi çiftlemez. *Aktarılan arşiv özetlerini kaldır* ile arşiv geri alınabilir.
+
 ## Veriler
 
 - Veriler Netlify Blobs'ta tutulur; tüm kullanıcılar aynı veriyi görür. PDF'ler tarayıcıda okunur, sunucuya yalnızca sipariş bilgileri gönderilir.

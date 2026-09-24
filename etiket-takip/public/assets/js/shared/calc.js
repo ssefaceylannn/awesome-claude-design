@@ -80,7 +80,25 @@ export function productEligible(c, productId) {
 }
 
 /** Tek sipariş: satırları eşleştir, kampanyaları uygula */
+/**
+ * Eski sistemden aktarılan günlük özet ("arşiv"): sipariş detayı yok; etiket ve
+ * kampanya adetleri o gün kaydedildiği gibi sabit kullanılır, yeniden hesaplanmaz.
+ */
+function computeSummary(o, ctx) {
+  const store = ctx.resolveStore(o.sender);
+  const platform = (store && store.platform) || o.platform || '';
+  const toLines = (list) => (list || []).flatMap((it) => {
+    const m = ctx.match(it.name);
+    if (m.parts && m.parts.length) return m.parts.map((p) => ({ raw: it.name, qty: it.qty, productId: p.productId, ignored: false, method: m.method, mult: p.qty, units: it.qty * p.qty, candidates: [] }));
+    return [{ raw: it.name, qty: it.qty, productId: m.productId, ignored: !!m.ignored, method: m.method, mult: 1, units: it.qty, candidates: m.candidates }];
+  });
+  const lines = toLines(o.items);
+  const rewards = toLines(o.bonus).filter((l) => !l.ignored).map((l) => ({ campaignId: '__archive', name: 'Arşiv (eski sistem kampanyaları)', productId: l.productId, raw: l.raw, qty: l.units }));
+  return { order: o, store, platform, lines, rewards, summary: true };
+}
+
 export function computeOrder(o, ctx) {
+  if (o.summary) return computeSummary(o, ctx);
   const store = ctx.resolveStore(o.sender);
   const platform = (store && store.platform) || o.platform || '';
   const lines = (o.items || []).flatMap((it) => {
@@ -160,13 +178,21 @@ export function aggregate(orders, ctx, filter = {}) {
     const c = computeOrder(o, ctx);
     if (filter.storeIds && filter.storeIds.length && !(c.store && filter.storeIds.includes(c.store.id))) continue;
     if (filter.platforms && filter.platforms.length && !filter.platforms.includes(c.platform)) continue;
+    const orderCount = o.summary ? +o.orderCount || 0 : 1;
+    if (o.summary && !(o.items || []).length && !(o.bonus || []).length) {
+      // Arşiv: yalnızca günün sipariş sayısı (mağaza bazında bilinmiyor)
+      R.orders += orderCount;
+      R.archiveDays = (R.archiveDays || new Set()).add(o.date);
+      continue;
+    }
     R.computed.push(c);
-    R.orders++;
+    R.orders += orderCount;
+    if (o.summary) R.archiveDays = (R.archiveDays || new Set()).add(o.date);
     if (o.checked) R.checked++;
     const sk = c.store ? c.store.id : '?' + fold(o.sender);
     if (!R.stores.has(sk)) R.stores.set(sk, { store: c.store, sender: o.sender, platform: c.platform, orders: 0, labelUnits: 0, campaignUnits: 0, campaignOrders: 0, products: new Map() });
     const S = R.stores.get(sk);
-    S.orders++;
+    S.orders += orderCount;
     for (const l of c.lines) {
       if (l.ignored) continue;
       R.lineCount++;
@@ -185,8 +211,18 @@ export function aggregate(orders, ctx, filter = {}) {
         R.unmatched.set(k, u);
       }
     }
-    if (c.rewards.length) { R.campaignOrders++; S.campaignOrders++; }
+    if (c.rewards.length && !o.summary) { R.campaignOrders++; S.campaignOrders++; }
     for (const r of c.rewards) {
+      if (!r.productId) {
+        // Arşivdeki eşleşmeyen kampanya adedi → eşleşmeyenler arasında göster
+        const k = fold(r.raw || '');
+        const u = R.unmatched.get(k) || { raw: r.raw, units: 0, orders: new Set(), candidates: [], method: 'none' };
+        u.units += r.qty;
+        R.unmatched.set(k, u);
+        R.campaignUnits += r.qty;
+        S.campaignUnits += r.qty;
+        continue;
+      }
       R.campaignUnits += r.qty;
       S.campaignUnits += r.qty;
       const p = prod(r.productId);
