@@ -52,6 +52,7 @@ const SANITIZE = {
         senders: (Array.isArray(s.senders) ? s.senders : []).map((x) => str(x, 120)).filter(Boolean).slice(0, 20),
         color: /^#[0-9a-f]{6}$/i.test(s.color) ? s.color : '#64748b',
         code: str(s.code, 20),
+        company: str(s.company, 60),
         note: str(s.note, 500),
         active: s.active !== false,
       };
@@ -436,8 +437,8 @@ async function importOrders(req, user) {
   for (const r of results) {
     if (r.status !== 'new' && r.status !== 'merge' && r.status !== 'fix') continue;
     const o = orders[r.i];
-    if (o.source === 'resend') continue; // ürünü elle seçildi; eşleştirme ekranına düşmez
-    for (const it of o.items) addName(it, o.date, 1);
+    // Yeniden gönderimde ürünü elle seçilmiş satırlar eşleştirme ekranına düşmez
+    for (const it of o.items) if (!it.productId) addName(it, o.date, 1);
     // Düzeltilen kayıttaki eski (hatalı okunmuş) adlar eşleştirme ekranından düşer
     if (r.status === 'fix') for (const it of r.old || []) addName(it, o.date, -1);
   }

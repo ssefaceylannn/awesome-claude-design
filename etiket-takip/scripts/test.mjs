@@ -19,6 +19,48 @@ const products = [
   { id: 'kakao', name: 'Ham Kakao Tozu' },
 ];
 
+await test('Trendyol sipariş listesi: çoklu sipariş, alıcı, 734 kodu, ürün ve adet', async () => {
+  const { parseOrderList, companyFor } = await import('../public/assets/js/shared/resend.js');
+  // Satıcı panelinden kopyalanan biçim (isimler ve numaralar örnek)
+  const block = (no, name, qty, product, code, extra = '') => `#${no}\n\nSipariş Tarihi:\n\n25.09.2026 13:38\n\nPaket No:\n\n4189400162\n\nTeslimat No:\n\n10869694660\n\nTermin Süresi:\n\n3 gün 22 saat 43 dakika\n\t\n\n${name}\n${extra}\t\n\n${qty}\n${product}, one size-image\n${product}, one size\n\nStok Kodu:\n\nmerchantSku\n\nRenk:\n\n-\n\nBarkod:\n\n8682742502800\n\nBeden:\n\nTek Ebat\n\nBu ürünün iade riski yüksek\n\nNeden iade riski yüksek?\n\t\n\n₺199,00\n\t\n\n${code}\n\nSatıcı anlaşmalı kargo\n\t\n\nSatış Tutarı:\n\n₺398,00\n\nSatıcı İndirim Tutarı:\n\n₺143,20\n\nFaturalanacak Tutar:\n\n₺254,80\n\t\n`;
+  const text = block('11600000001', 'Ali Veli', 2, 'Karnıyarık Otu Mix - 250ml KM-01', '7340000000000001')
+    + block('11600000002', 'Ayşe Deneme Deneme', 3, 'Magnezyum Shot (Sitrat, Taurat, B6 Vitamini, D3 Vitamini) - 10 Adet MG', '7340000000000002', "\nTrendyol Plus'lı\n");
+  const list = parseOrderList(text);
+  assert.equal(list.length, 2);
+  assert.deepEqual(list.map((o) => [o.orderNo, o.recipient, o.code]), [['11600000001', 'Ali Veli', '7340000000000001'], ['11600000002', 'Ayşe Deneme Deneme', '7340000000000002']]);
+  // Ürün adındaki "10 Adet" adet sayılmaz; adet görselin üstündeki satırdan
+  assert.deepEqual(list[1].items, [{ name: 'Magnezyum Shot (Sitrat, Taurat, B6 Vitamini, D3 Vitamini) - 10 Adet MG', qty: 3, qtyFound: true }]);
+  assert.deepEqual(list[0].items.map((x) => [x.name, x.qty]), [['Karnıyarık Otu Mix - 250ml KM-01', 2]]);
+  assert.equal(list[0].amounts.billed, 254.8);
+  assert.equal(list[0].packageNo, '4189400162');
+  assert.equal(parseOrderList('Satış Tutarı: ₺199,00').length, 0);
+  // Mağaza → etikette yazan firma
+  const co = (name, company) => companyFor({ name, company });
+  assert.deepEqual(['Momordica Trendyol', 'Pharma Labs', 'Daily Organics Trendyol', 'Homence', 'Ultra Natura Trendyol', 'BeeSafe Shopify', 'Power Vital İkas'].map((x) => co(x)), ['İpekyolu', 'İpekyolu', 'Power Vital', 'Homence', 'Formlife', 'Apidemia', '']);
+  assert.equal(co('Ultra Natura Trendyol', 'Özel Firma'), 'Özel Firma');
+});
+
+await test('Code 128 barkod: çöz ve karşılaştır', async () => {
+  const { code128Widths } = await import('../public/assets/js/shared/barcode.js');
+  const PAT = '212222 222122 222221 121223 121322 131222 122213 122312 132212 221213 221312 231212 112232 122132 122231 113222 123122 123221 223211 221132 221231 213212 223112 312131 311222 321122 321221 312212 322112 322211 212123 212321 232121 111323 131123 131321 112313 132113 132311 211313 231113 231311 112133 112331 132131 113123 113321 133121 313121 211331 231131 213113 213311 213131 311123 311321 331121 312113 312311 332111 314111 221411 431111 111224 111422 121124 121421 141122 141221 112214 112412 122114 122411 142112 142211 241211 221114 413111 241112 134111 111242 121142 121241 114212 124112 124211 411212 421112 421211 212141 214121 412121 111143 111341 131141 114113 114311 411113 411311 113141 114131 311141 411131 211412 211214 211232'.split(' ');
+  const decode = (w) => {
+    assert.equal(w.slice(-7).join(''), '2331112');
+    const vals = [];
+    for (let i = 0; i < w.length - 7; i += 6) vals.push(PAT.indexOf(w.slice(i, i + 6).join('')));
+    assert.ok(vals.every((v) => v >= 0));
+    const check = vals.pop();
+    assert.equal(vals.reduce((s, v, k) => s + v * (k || 1), 0) % 103, check);
+    let set = vals[0] === 105 ? 'C' : 'B', out = '';
+    for (const v of vals.slice(1)) {
+      if (v === 99) set = 'C'; else if (v === 100) set = 'B';
+      else out += set === 'C' ? String(v).padStart(2, '0') : String.fromCharCode(v + 32);
+    }
+    return out;
+  };
+  for (const t of ['7340037450818569', '734003745081856', 'TR-123456', 'A', '12']) assert.equal(decode(code128Widths(t)), t);
+  assert.equal(code128Widths('7340037450818569').reduce((a, b) => a + b, 0), 11 * 11 + 2); // başlangıç + 8 çift + sağlama + bitiş(13)
+});
+
 await test('Metin sadeleştirme ve birimler', () => {
   assert.equal(fold("ULTRA NATURA Detoks Shot 7'li"), 'ultra natura detoks shot 7li');
   assert.equal(fold('Sultan Sirkesi 1 Lt'), 'sultan sirkesi 1000ml');
@@ -117,7 +159,7 @@ await test('Liste: başlık satırı, 4 sütun, tekrar raporu, sona ekleme; mark
   const ps = [{ id: 'un', name: 'Karamürver ve Karadut Özü', brand: 'Ultra Natura' }, { id: 'pv', name: 'Karamürver ve Karadut Özü', brand: 'Power Vital' }, { id: 'fit', name: 'Fit 365', brand: 'Power Vital' }];
   const stores = [{ id: 'spv', name: 'Power Vital İkas', platform: 'ikas', senders: [] }, { id: 'sun', name: 'Ultra Natura Trendyol', platform: 'trendyol', senders: [] }, { id: 'sdo', name: 'Daily Organics Trendyol', platform: 'trendyol', senders: [] }];
   const run = (settings, sender, name) => [...aggregate([{ k: 'a', date: '2026-09-24', sender, items: [{ name, qty: 1 }] }], createContext({ products: ps, stores, campaigns: [], aliases: {}, settings })).products.keys()];
-  assert.deepEqual(run({}, 'Daily Organics Trendyol', 'Karamürver ve Karadut Özü 680 gr'), ['un']);
+  assert.deepEqual(run({}, 'Daily Organics Trendyol', 'Karamürver ve Karadut Özü 680 gr'), ['pv']); // ürüne özel varsayılan: Daily Organics → Power Vital
   assert.deepEqual(run({}, 'Ultra Natura Trendyol', 'Karamürver ve Karadut Özü'), ['un']);
   assert.deepEqual(run({}, 'Power Vital İkas', 'Karamürver ve Karadut Özü'), ['pv']);
   assert.deepEqual(run({}, 'Daily Organics Trendyol', 'Fit 365'), []); // PV ürünü başka mağazada eşleşmez
@@ -125,21 +167,19 @@ await test('Liste: başlık satırı, 4 sütun, tekrar raporu, sona ekleme; mark
   assert.deepEqual(run({ brandStores: { 'Power Vital': [] } }, 'Daily Organics Trendyol', 'Fit 365'), ['fit']);
 });
 
-await test('Power Vital Karadut Karamürver Daily Organics\'te de eşleşir (ürüne özel ek mağaza)', () => {
+await test('Karadut: Ultra Natura mağazasında Ultra Natura, Daily Organics ve Power Vital İkas\'ta Power Vital', () => {
   const ps = [{ id: 'un', name: 'Karamürver ve Karadut Özü', brand: 'Ultra Natura' }, { id: 'pv', name: 'Karamürver ve Karadut Özü', brand: 'Power Vital' }, { id: 'fit', name: 'Fit 365', brand: 'Power Vital' }];
   const stores = [{ id: 'spv', name: 'Power Vital İkas', platform: 'ikas', senders: [] }, { id: 'sun', name: 'Ultra Natura Trendyol', platform: 'trendyol', senders: [] }, { id: 'sdo', name: 'Daily Organics Trendyol', platform: 'trendyol', senders: [] }];
   const run = (list, sender, name) => [...aggregate([{ k: 'a', date: '2026-09-24', sender, items: [{ name, qty: 1 }] }], createContext({ products: list, stores, campaigns: [], aliases: {}, settings: {} })).products.keys()];
-  // Etikette marka yazıyorsa o markanın ürünü
-  assert.deepEqual(run(ps, 'Daily Organics Trendyol', 'Power Vital Karamürver ve Karadut Özü 680 gr'), ['pv']);
+  assert.deepEqual(run(ps, 'Daily Organics Trendyol', 'Karamürver ve Karadut Özü 680 gr'), ['pv']);
+  assert.deepEqual(run(ps, 'Power Vital İkas', 'Karamürver ve Karadut Özü'), ['pv']);
+  assert.deepEqual(run(ps, 'Ultra Natura Trendyol', 'Karamürver ve Karadut Özü'), ['un']);
+  // Etikette marka açıkça yazıyorsa o markanın ürünü
   assert.deepEqual(run(ps, 'Daily Organics Trendyol', 'Ultra Natura Karamürver ve Karadut Özü'), ['un']);
-  // Marka yazmıyorsa mağazanın kendi markası (önceki davranış korunur)
-  assert.deepEqual(run(ps, 'Daily Organics Trendyol', 'Karamürver ve Karadut Özü'), ['un']);
   // Yalnızca Power Vital Karadut Daily Organics'e açılır; diğer PV ürünleri yine eşleşmez
   assert.deepEqual(run(ps, 'Daily Organics Trendyol', 'Fit 365'), []);
-  // Daily Organics yalnızca PV versiyonunu satıyorsa
-  assert.deepEqual(run(ps.filter((p) => p.id !== 'un'), 'Daily Organics Trendyol', 'Karamürver ve Karadut Özü'), ['pv']);
-  // Ürün ayarında ek mağaza boş bırakılırsa varsayılan kapanır
-  assert.deepEqual(run(ps.map((p) => (p.id === 'pv' ? { ...p, stores: [] } : p)), 'Daily Organics Trendyol', 'Power Vital Karamürver ve Karadut Özü'), ['un']);
+  // Ürün ayarında ek mağaza boş bırakılırsa varsayılan kapanır (Daily Organics → Ultra Natura)
+  assert.deepEqual(run(ps.map((p) => (p.id === 'pv' ? { ...p, stores: [] } : p)), 'Daily Organics Trendyol', 'Karamürver ve Karadut Özü'), ['un']);
 });
 
 await test('Yeniden gönderim: yapıştırılan sipariş detayından ürün, adet ve tutar', async () => {

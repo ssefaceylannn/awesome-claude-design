@@ -662,3 +662,43 @@ a { color: var(--brand); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } .kpi:hover { transform: none; } }
 /* Netlify önizleme araç çubuğu / rozeti görünmesin */
 [id*="netlify" i]:not(#app *), [class*="netlify" i]:not(#app *), iframe[src*="netlify" i], netlify-drawer, netlify-deploy-preview { display: none !important; }
+
+/* ---------------------------------------------------------------- yeniden gönderim etiketi
+   Kâğıt etiket: tema ne olursa olsun beyaz zemin, siyah yazı. Ölçüler mm (termal yazıcı). */
+.resend-opts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 14px; }
+@media (max-width: 900px) { .resend-opts { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 520px) { .resend-opts { grid-template-columns: 1fr; } }
+.label-grid { display: flex; flex-wrap: wrap; gap: 20px; }
+.label-cell { width: calc(100mm * .72 + 2px); }
+.label-cell.off .label-zoom { opacity: .35; }
+.label-zoom { zoom: .72; border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px var(--border-strong), var(--shadow); width: max-content; }
+.plabel {
+  width: 100mm; height: 150mm; box-sizing: border-box; padding: 6mm 6mm 18mm; background: #fff; color: #000;
+  display: flex; flex-direction: column; overflow: hidden; font-family: "Inter", Arial, Helvetica, sans-serif; line-height: 1.2;
+}
+.plabel.sz-100 { height: 100mm; padding: 5mm 5mm 9mm; }
+.pl-head { border-bottom: .6mm solid #000; padding-bottom: 2.5mm; }
+.pl-name { font-size: 6.4mm; font-weight: 800; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.pl-no { font-size: 4.4mm; font-weight: 600; margin-top: 1mm; font-variant-numeric: tabular-nums; }
+.pl-store { display: flex; align-items: center; justify-content: space-between; gap: 3mm; margin-top: 2.5mm; font-size: 3.8mm; }
+.pl-sname { font-weight: 600; }
+.pl-comp { font-weight: 800; border: .45mm solid #000; border-radius: 1.2mm; padding: .6mm 2mm; white-space: nowrap; letter-spacing: .02em; }
+.pl-items { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 2.4mm; padding: 3mm 0; min-height: 0; }
+.pl-item { font-size: 5.6mm; font-weight: 600; line-height: 1.22; overflow-wrap: anywhere; }
+.pl-item b { font-weight: 900; margin-right: 1mm; }
+.pl-bc { text-align: center; }
+.pl-bc svg.bc { display: block; width: 100%; height: 22mm; }
+.pl-code { font-size: 4mm; font-weight: 700; letter-spacing: .12em; margin-top: 1.2mm; font-variant-numeric: tabular-nums; }
+.pl-miss { border: .5mm dashed #000; padding: 4mm; font-size: 3.6mm; font-weight: 700; }
+.plabel.sz-100 .pl-name { font-size: 5.2mm; }
+.plabel.sz-100 .pl-no { font-size: 3.8mm; }
+.plabel.sz-100 .pl-store { font-size: 3.3mm; margin-top: 1.8mm; }
+.plabel.sz-100 .pl-item { font-size: 4.4mm; }
+.plabel.sz-100 .pl-items { gap: 1.6mm; padding: 2mm 0; }
+.plabel.sz-100 .pl-bc svg.bc { height: 16mm; }
+.plabel.sz-100 .pl-code { font-size: 3.4mm; }
+@media print {
+  #print .plabels { display: block; }
+  #print .plabel { break-after: page; page-break-after: always; font-family: "Inter", Arial, Helvetica, sans-serif; }
+  #print .plabel:last-child { break-after: auto; page-break-after: auto; }
+}

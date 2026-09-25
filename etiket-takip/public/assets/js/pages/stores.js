@@ -2,6 +2,7 @@
 import { html, mount, icon, modal, confirmDialog, toast, uid, PLATFORMS, pLabel, pBadge, n, today, addDays, emptyState, collator, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
 import { state, isAdmin, saveSection, fetchOrders } from '../core/api.js';
 import { fold } from '../shared/text.js';
+import { companyFor } from '../shared/resend.js';
 
 const COLORS = ['#f97316', '#ea580c', '#dc2626', '#db2777', '#9333ea', '#7c3aed', '#4f46e5', '#2563eb', '#0891b2', '#0d9488', '#16a34a', '#65a30d', '#ca8a04', '#64748b'];
 
@@ -14,6 +15,7 @@ export async function storeForm(store, { presetSender } = {}) {
       <label class="f full">Mağaza adı<input class="input" name="name" value="${s.name}" placeholder="Örn. Ultra Natura Trendyol 2" maxlength="80"></label>
       <label class="f">Platform<select class="input" name="platform">${PLATFORMS.map((p) => html`<option value="${p.id}" ${p.id === s.platform ? 'selected' : ''}>${p.label}</option>`)}</select></label>
       <label class="f">Kısa kod <span class="hint">Raporlarda kısaltma (isteğe bağlı)</span><input class="input" name="code" value="${s.code}" maxlength="20" placeholder="TY2"></label>
+      <label class="f full">Etikette yazan firma <span class="hint">Yeniden gönderim etiketinde mağaza adının yanında görünür. Boşsa varsayılan: ${companyFor({ name: s.name }) || '—'}</span><input class="input" name="company" value="${s.company || ''}" maxlength="60" placeholder="${companyFor({ name: s.name }) || 'Örn. Formlife'}"></label>
       <label class="f full">Etiketteki gönderici adları <span class="hint">Etiketin “Gönderici” alanında yazan ad. Her satıra bir tane; mağaza bu adlarla tanınır.</span>
         <textarea class="input" name="senders" rows="3" placeholder="Ultra Natura Trendyol">${s.senders.join('\n')}</textarea></label>
       <div class="f full">Renk<div class="row wrap" id="colors" style="gap:6px">${COLORS.map((c) => html`<button type="button" class="btn icon sm" data-c="${c}" style="background:${c};border-color:${c === s.color ? 'var(--text)' : c};box-shadow:${c === s.color ? '0 0 0 2px var(--surface) inset' : 'none'}" aria-label="${c}"></button>`)}</div><input type="hidden" name="color" value="${s.color}"></div>
@@ -40,6 +42,7 @@ export async function storeForm(store, { presetSender } = {}) {
         name: f('name').value.trim(),
         platform: f('platform').value,
         code: f('code').value.trim(),
+        company: f('company').value.trim(),
         senders: [...new Set(f('senders').value.split('\n').map((x) => x.trim()).filter(Boolean))],
         color: f('color').value,
         note: f('note').value.trim(),

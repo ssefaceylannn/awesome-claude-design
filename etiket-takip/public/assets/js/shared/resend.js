@@ -110,3 +110,74 @@ export function parseResendText(text, matchLine) {
   out.items = [...byId.values()].map((x) => ({ ...x, qty: Math.max(1, Math.min(9999, x.qty || 1)), qtyFound: x.qty != null }));
   return out;
 }
+
+// ------------------------------------------------------------------ Trendyol sipariş listesi
+// Satıcı panelindeki "Siparişler" listesinden kopyalanan metin: her sipariş "#11…" satırıyla başlar.
+// Her bloktan alıcı, sipariş no, 734… ile başlayan kargo kodu, ürünler ve adetler okunur.
+
+/** Etiket ürün adı: "…, one size-image" / "…, one size" varyant ekleri atılır */
+export const cleanProductName = (s) => String(s || '').replace(/-image$/i, '').replace(/,\s*(one size|tek ebat|standart)\s*$/i, '').trim();
+
+function parseBlock(ls) {
+  const o = { orderNo: ls[0].replace(/^#/, ''), recipient: '', orderDate: '', packageNo: '', deliveryNo: '', code: '', amounts: {}, items: [] };
+  const labeled = new Set(); // bir başlığın değeri olan satırlar (barkod, paket no…) kargo kodu sayılmaz
+  const valueIdx = (i) => { for (let j = i + 1; j < Math.min(ls.length, i + 4); j++) if (ls[j]) return j; return -1; };
+  let afterTermin = -1;
+  for (let i = 1; i < ls.length; i++) {
+    const l = lower(ls[i]);
+    if (!l.endsWith(':')) continue;
+    const j = valueIdx(i);
+    if (j < 0) continue;
+    labeled.add(j);
+    const v = ls[j];
+    if (/^sipari[sş] tarihi/.test(l)) o.orderDate = v;
+    else if (/^paket no/.test(l)) o.packageNo = v;
+    else if (/^teslimat no/.test(l)) o.deliveryNo = v;
+    else if (/^termin/.test(l)) afterTermin = j;
+    for (const [key, re] of AMOUNTS) if (o.amounts[key] == null && re.test(l)) { const m = parseMoney(v); if (m != null) o.amounts[key] = m; }
+  }
+  // Ürünler: "-image" ile biten satır ürün görselinin alt yazısıdır; hemen üstündeki sayı adettir
+  const imgLines = ls.map((l, i) => (/-image$/i.test(l) ? i : -1)).filter((i) => i >= 0);
+  const qtyAbove = (i) => { for (let j = i - 1; j >= Math.max(1, i - 3); j--) if (/^\d{1,4}$/.test(ls[j])) return +ls[j]; return null; };
+  if (imgLines.length) {
+    for (const i of imgLines) o.items.push({ name: cleanProductName(ls[i]), qty: qtyAbove(i) || 1, qtyFound: qtyAbove(i) != null });
+  } else {
+    // Görsel satırı yoksa: tek başına sayı + ardından gelen metin satırı
+    for (let i = 1; i < ls.length - 1; i++) {
+      if (!/^\d{1,4}$/.test(ls[i]) || labeled.has(i)) continue;
+      const j = valueIdx(i);
+      if (j > 0 && /\p{L}{3,}/u.test(ls[j]) && !ls[j].endsWith(':')) o.items.push({ name: cleanProductName(ls[j]), qty: +ls[i], qtyFound: true });
+    }
+  }
+  // Alıcı: termin süresinden sonraki ilk ad satırı ("Trendyol Plus'lı" gibi rozetler hariç)
+  const firstItem = imgLines.length ? imgLines[0] : ls.length;
+  for (let i = afterTermin >= 0 ? afterTermin + 1 : 1; i < firstItem; i++) {
+    const l = ls[i];
+    if (!l || labeled.has(i) || l.endsWith(':') || /^\d/.test(l) || /trendyol|plus|kargo|iade/i.test(l) || !/\p{L}{2,}/u.test(l)) continue;
+    o.recipient = l.slice(0, 120);
+    break;
+  }
+  // Kargo kodu: 734… ile başlayan uzun numara; yoksa başlıksız ilk uzun numara
+  const codes = ls.map((l, i) => (!labeled.has(i) && /^\d{12,24}$/.test(l) ? l : null)).filter(Boolean);
+  o.code = codes.find((c) => c.startsWith('734')) || codes[0] || '';
+  return o;
+}
+
+/** Metin Trendyol listesi biçimindeyse siparişleri döndürür, değilse boş dizi */
+export function parseOrderList(text) {
+  const ls = String(text || '').split(/\r?\n/).map((l) => l.replace(/\s+/g, ' ').trim());
+  const starts = [];
+  ls.forEach((l, i) => { if (/^#\d{6,}$/.test(l)) starts.push(i); });
+  return starts.map((s, n) => parseBlock(ls.slice(s, n + 1 < starts.length ? starts[n + 1] : ls.length)));
+}
+
+// ------------------------------------------------------------------ mağaza → etikette yazan firma
+const COMPANY_DEFAULTS = [['momordica', 'İpekyolu'], ['pharmalabs', 'İpekyolu'], ['dailyorganic', 'Power Vital'], ['homence', 'Homence'], ['ultranatura', 'Formlife'], ['beesafe', 'Apidemia']];
+/** Mağaza ayarındaki firma; boşsa mağaza adından varsayılan (Daily Organics → Power Vital…) */
+export function companyFor(store) {
+  if (!store) return '';
+  if (store.company) return store.company;
+  const k = fold(store.name).replace(/\s+/g, '');
+  const hit = COMPANY_DEFAULTS.find(([key]) => k.includes(key));
+  return hit ? hit[1] : '';
+}

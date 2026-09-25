@@ -24,8 +24,9 @@ export function brandRules(config) {
 
 /**
  * Ürünün, marka kuralına ek olarak satıldığı mağazalar (ürün ayarındaki "Ayrıca satıldığı mağazalar").
+ * Bu mağazalarda aynı adlı başka marka ürünü varsa bu ürün tercih edilir.
  * Ayarlanmamışsa (undefined) varsayılan: Power Vital Karamürver/Karadut ürünü adında
- * "Daily Organic" geçen mağazalarda da satılır.
+ * "Daily Organic" geçen mağazalarda satılır (orada Ultra Natura yerine Power Vital sayılır).
  */
 export function productExtraStores(p, stores) {
   if (Array.isArray(p.stores)) return p.stores;
@@ -84,7 +85,7 @@ export function createContext(config) {
   const label = (id) => labelOf(productsById.get(id));
   // Arşivlenen kampanyalar kendi tarih aralığında geçmiş raporlarda sayılmaya devam eder
   const campaigns = (config.campaigns || []).filter((c) => c.active).map(normCampaign);
-  return { config, match, matchFor, resolveStore, products, productsById, label, labelOf, campaigns, stores: config.stores || [], native };
+  return { config, match, matchFor, resolveStore, products, productsById, label, labelOf, campaigns, stores: config.stores || [], native, listed: (p, store) => !!(extra.get(p.id) && extra.get(p.id).has(store.id)) };
 }
 
 /**
@@ -154,9 +155,13 @@ function byBrand(m, store, sender, ctx, raw = '') {
   for (const hit of [brandIn(raw), brandIn(`${store ? store.name : ''} ${sender || ''}`)]) {
     if (hit.length === 1) return { ...m, productId: hit[0], method: 'brand', multiplier: 1 };
   }
-  // 3) Mağazada markası gereği satılan ürün, yalnızca ürüne özel "ek mağaza" olarak satılana tercih edilir
+  // 3) Ürün ayarında bu mağaza için özellikle seçilmiş ürün ("Ayrıca satıldığı mağazalar"),
+  // 4) yoksa mağazada markası gereği satılan ürün
   if (store && ctx.native) {
-    const nat = pool.filter((id) => { const p = ctx.productsById.get(id); return p && ctx.native(p, store); });
+    const get = (id) => ctx.productsById.get(id);
+    const listed = pool.filter((id) => get(id) && ctx.listed(get(id), store));
+    if (listed.length === 1) return { ...m, productId: listed[0], method: 'brand', multiplier: 1 };
+    const nat = pool.filter((id) => get(id) && ctx.native(get(id), store));
     if (nat.length === 1 && nat.length < pool.length) return { ...m, productId: nat[0], method: 'brand', multiplier: 1 };
   }
   return m;
