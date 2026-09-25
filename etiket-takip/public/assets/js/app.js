@@ -9,6 +9,7 @@ const NAV = [
   { group: 'Operasyon', items: [
     { id: 'dashboard', label: 'Genel Bakış', icon: 'dashboard' },
     { id: 'upload', label: 'Etiket Yükle', icon: 'upload', role: 'personel' },
+    { id: 'resend', label: 'Yeniden Gönderim', icon: 'refresh', role: 'personel' },
     { id: 'production', label: 'Üretim Listesi', icon: 'factory' },
     { id: 'orders', label: 'Siparişler', icon: 'receipt' },
     { id: 'calendar', label: 'Günlük Arşiv', icon: 'calendar' },

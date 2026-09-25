@@ -125,6 +125,68 @@ await test('Liste: başlık satırı, 4 sütun, tekrar raporu, sona ekleme; mark
   assert.deepEqual(run({ brandStores: { 'Power Vital': [] } }, 'Daily Organics Trendyol', 'Fit 365'), ['fit']);
 });
 
+await test('Power Vital Karadut Karamürver Daily Organics\'te de eşleşir (ürüne özel ek mağaza)', () => {
+  const ps = [{ id: 'un', name: 'Karamürver ve Karadut Özü', brand: 'Ultra Natura' }, { id: 'pv', name: 'Karamürver ve Karadut Özü', brand: 'Power Vital' }, { id: 'fit', name: 'Fit 365', brand: 'Power Vital' }];
+  const stores = [{ id: 'spv', name: 'Power Vital İkas', platform: 'ikas', senders: [] }, { id: 'sun', name: 'Ultra Natura Trendyol', platform: 'trendyol', senders: [] }, { id: 'sdo', name: 'Daily Organics Trendyol', platform: 'trendyol', senders: [] }];
+  const run = (list, sender, name) => [...aggregate([{ k: 'a', date: '2026-09-24', sender, items: [{ name, qty: 1 }] }], createContext({ products: list, stores, campaigns: [], aliases: {}, settings: {} })).products.keys()];
+  // Etikette marka yazıyorsa o markanın ürünü
+  assert.deepEqual(run(ps, 'Daily Organics Trendyol', 'Power Vital Karamürver ve Karadut Özü 680 gr'), ['pv']);
+  assert.deepEqual(run(ps, 'Daily Organics Trendyol', 'Ultra Natura Karamürver ve Karadut Özü'), ['un']);
+  // Marka yazmıyorsa mağazanın kendi markası (önceki davranış korunur)
+  assert.deepEqual(run(ps, 'Daily Organics Trendyol', 'Karamürver ve Karadut Özü'), ['un']);
+  // Yalnızca Power Vital Karadut Daily Organics'e açılır; diğer PV ürünleri yine eşleşmez
+  assert.deepEqual(run(ps, 'Daily Organics Trendyol', 'Fit 365'), []);
+  // Daily Organics yalnızca PV versiyonunu satıyorsa
+  assert.deepEqual(run(ps.filter((p) => p.id !== 'un'), 'Daily Organics Trendyol', 'Karamürver ve Karadut Özü'), ['pv']);
+  // Ürün ayarında ek mağaza boş bırakılırsa varsayılan kapanır
+  assert.deepEqual(run(ps.map((p) => (p.id === 'pv' ? { ...p, stores: [] } : p)), 'Daily Organics Trendyol', 'Power Vital Karamürver ve Karadut Özü'), ['un']);
+});
+
+await test('Yeniden gönderim: yapıştırılan sipariş detayından ürün, adet ve tutar', async () => {
+  const { parseResendText, parseMoney, detectStore } = await import('../public/assets/js/shared/resend.js');
+  assert.equal(parseMoney('₺1.234,56'), 1234.56);
+  assert.equal(parseMoney('₺199,00'), 199);
+  const m = createMatcher({ products });
+  const matchLine = (l) => m(l).productId;
+  const text = `Sipariş No: 10234567890
+Alıcı Adı Soyadı: ayşe yılmaz
+Ultra Natura Detox Shot Zencefilli 60ml
+Barkod: 8680000000011
+Adet
+2
+Birim Fiyat ₺99,50
+Detox Mix Toz 250gr
+1 Adet
+Satış Tutarı:
+
+₺199,00
+
+Satıcı İndirim Tutarı:
+
+₺49,50
+
+Faturalanacak Tutar:
+
+₺149,50`;
+  const r = parseResendText(text, matchLine);
+  assert.equal(r.orderNo, '10234567890');
+  assert.equal(r.recipient, 'ayşe yılmaz');
+  assert.deepEqual(r.amounts, { sale: 199, discount: 49.5, billed: 149.5 });
+  assert.deepEqual(r.items.map((x) => [x.productId, x.qty]), [['shot', 2], ['mix', 1]]);
+  // Yalnızca tutarlar yapıştırılırsa ürün yok, tutarlar okunur
+  const only = parseResendText('Satış Tutarı:\n\n₺199,00\n\nSatıcı İndirim Tutarı:\n\n₺49,50\n\nFaturalanacak Tutar:\n\n₺149,50', matchLine);
+  assert.equal(only.items.length, 0);
+  assert.equal(only.amounts.billed, 149.5);
+  // Adet yoksa 1; "2x" etiket biçimi
+  assert.deepEqual(parseResendText('2x Zencefil Shot\nSultan Sirkesi 500ml', matchLine).items.map((x) => [x.productId, x.qty, x.qtyFound]), [['zen', 2, true], ['s500', 1, false]]);
+  assert.equal(detectStore('Mağaza: Daily Organics Trendyol', [{ id: 'd', name: 'Daily Organics Trendyol' }, { id: 'u', name: 'Ultra Natura' }]).id, 'd');
+  // Kayıt: ürün sabitlenir, kampanya uygulanmaz
+  const ctx = createContext({ products, stores: [], campaigns: [{ id: 'c', name: 'Hediye', active: true, condition: 'order', rewards: [{ productId: 'kakao', qty: 1 }], storeIds: [], platforms: [], triggerProductIds: [] }], aliases: {}, settings: {} });
+  const R = aggregate([{ k: 'r', date: '2026-09-24', sender: 'X', source: 'resend', items: [{ name: 'Detox Shot', qty: 3, productId: 'shot' }] }], ctx);
+  assert.equal(R.products.get('shot').labelUnits, 3);
+  assert.equal(R.campaignUnits, 0);
+});
+
 await test('Gramaj/hacim farkı ayrı ürün sayılır', () => {
   const m = createMatcher({ products });
   assert.equal(m('Sultan Sirkesi - 500ml').productId, 's500');

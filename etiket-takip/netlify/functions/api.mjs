@@ -72,6 +72,8 @@ const SANITIZE = {
         exclude: str(p.exclude, 300),
         packMultiplier: !!p.packMultiplier,
         active: p.active !== false,
+        // Marka kuralına ek olarak satıldığı mağazalar (yoksa varsayılan kural uygulanır)
+        ...(Array.isArray(p.stores) ? { stores: p.stores.filter(id).slice(0, 200) } : {}),
       };
     });
   },
@@ -259,7 +261,7 @@ async function login(req) {
 // ------------------------------------------------------------------ içe aktarma
 function sanitizeOrder(o) {
   const items = (Array.isArray(o.items) ? o.items : [])
-    .map((it) => ({ name: str(it.name, 200), qty: int(it.qty, 1, 100000, 1) }))
+    .map((it) => ({ name: str(it.name, 200), qty: int(it.qty, 1, 100000, 1), ...(it.productId && id(it.productId) ? { productId: it.productId } : {}) }))
     .filter((it) => it.name)
     .slice(0, 200);
   return {
@@ -273,7 +275,8 @@ function sanitizeOrder(o) {
     platformOrderNo: str(o.platformOrderNo, 60).replace(/\s+/g, ''),
     packageNo: str(o.packageNo, 60).replace(/\s+/g, ''),
     amount: Math.max(0, Math.min(1e9, parseFloat(o.amount) || 0)),
-    source: o.source === 'excel' ? 'excel' : 'pdf',
+    source: ['excel', 'resend'].includes(o.source) ? o.source : 'pdf',
+    note: str(o.note, 300),
     items,
     pages: int(o.pages, 1, 100, 1),
     file: str(o.file, 200),
@@ -387,6 +390,7 @@ async function importOrders(req, user) {
         ...(o.platformOrderNo ? { platformOrderNo: o.platformOrderNo } : {}),
         ...(o.packageNo ? { packageNo: o.packageNo } : {}),
         ...(o.amount ? { amount: o.amount } : {}),
+        ...(o.note ? { note: o.note } : {}),
         source: o.source,
       };
       if (!dayAdds.has(o.date)) dayAdds.set(o.date, []);
@@ -432,6 +436,7 @@ async function importOrders(req, user) {
   for (const r of results) {
     if (r.status !== 'new' && r.status !== 'merge' && r.status !== 'fix') continue;
     const o = orders[r.i];
+    if (o.source === 'resend') continue; // ürünü elle seçildi; eşleştirme ekranına düşmez
     for (const it of o.items) addName(it, o.date, 1);
     // Düzeltilen kayıttaki eski (hatalı okunmuş) adlar eşleştirme ekranından düşer
     if (r.status === 'fix') for (const it of r.old || []) addName(it, o.date, -1);
@@ -581,14 +586,15 @@ async function deleteBatch(bid, user) {
 // Yedekten gelen sipariş kaydı: yalnızca bilinen alanlar, sınırlı uzunlukta
 function restoredOrder(o, date) {
   if (!o || typeof o !== 'object' || typeof o.k !== 'string' || !o.k || o.k.length > 200) return null;
-  const lines = (arr) => (Array.isArray(arr) ? arr : []).map((it) => ({ name: str(it && it.name, 200), qty: int(it && it.qty, 1, 100000, 1) })).filter((it) => it.name).slice(0, 500);
+  const lines = (arr) => (Array.isArray(arr) ? arr : []).map((it) => ({ name: str(it && it.name, 200), qty: int(it && it.qty, 1, 100000, 1), ...(it && it.productId && id(it.productId) ? { productId: it.productId } : {}) })).filter((it) => it.name).slice(0, 500);
   const items = lines(o.items);
   const rec = {
     k: o.k, no: str(o.no, 60), sender: str(o.sender, 120), platform: fold(o.platform).replace(/\s/g, '').slice(0, 30), recipient: str(o.recipient, 120),
     city: str(o.city, 80), cargo: str(o.cargo, 60), cargoCode: str(o.cargoCode, 60), items, pages: int(o.pages, 0, 100, 1), file: str(o.file, 200),
     date, batch: str(o.batch, 40), by: str(o.by, 60), at: str(o.at, 40), checked: !!o.checked,
-    source: ['excel', 'pdf', 'kampanya-hesaplama'].includes(o.source) ? o.source : 'pdf',
+    source: ['excel', 'pdf', 'resend', 'kampanya-hesaplama'].includes(o.source) ? o.source : 'pdf',
   };
+  if (o.note) rec.note = str(o.note, 300);
   for (const f of ['platformOrderNo', 'packageNo']) if (o[f]) rec[f] = str(o[f], 60);
   if (o.amount) rec.amount = Math.max(0, Math.min(1e9, parseFloat(o.amount) || 0));
   if (o.checked) { rec.checkedAt = str(o.checkedAt, 40); rec.checkedBy = str(o.checkedBy, 60); }

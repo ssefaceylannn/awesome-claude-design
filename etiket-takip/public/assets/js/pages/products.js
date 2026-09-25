@@ -3,7 +3,7 @@ import { html, mount, icon, modal, confirmDialog, toast, uid, n, esc, emptyState
 import { api, state, isAdmin, saveSection } from '../core/api.js';
 import { createMatcher, autoKeywords } from '../shared/matcher.js';
 import { parseProductList, planCatalogReplace } from '../core/catalog.js';
-import { brandRules } from '../shared/calc.js';
+import { brandRules, productExtraStores } from '../shared/calc.js';
 
 let labelNames = null;
 const has = (res, id) => res.productId === id || (res.parts || []).some((x) => x.productId === id);
@@ -20,6 +20,7 @@ export async function productForm(product, { presetName } = {}) {
   const cats = [...new Set(state.config.products.map((x) => x.category).filter(Boolean))].sort(collator.compare);
   const brands = brandList();
   const noise = state.config.settings.noiseWords;
+  let extraStores = productExtraStores(p, state.config.stores);
 
   const res = await modal({
     title: isNew ? 'Yeni ürün' : 'Ürünü düzenle',
@@ -30,6 +31,7 @@ export async function productForm(product, { presetName } = {}) {
         <label class="f">Marka<input class="input" name="brand" value="${p.brand || ''}" list="brandList" maxlength="60" placeholder="Momordica, Ultra Natura…"><datalist id="brandList">${brands.map((c) => html`<option value="${c}">`)}</datalist></label>
         <label class="f">Kategori<input class="input" name="category" value="${p.category}" list="catList" maxlength="60" placeholder="Shot, Sirke, Toz…"><datalist id="catList">${cats.map((c) => html`<option value="${c}">`)}</datalist></label>
         <label class="f full">Stok kodu (SKU)<input class="input" name="sku" value="${p.sku}" maxlength="60"></label>
+        <div class="f full">Ayrıca satıldığı mağazalar <span class="hint">Markası başka mağazalarla sınırlıysa bu ürün yine de seçilen mağazaların etiketlerinde eşleşir (ör. Power Vital Karadut Karamürver → Daily Organics)</span><div id="extraStores"></div></div>
         <label class="f full">Eşleşme kelimeleri <span class="hint">Boş bırakırsanız ürün adından otomatik üretilir. Tüm kelimeler etiket adında geçmeli. <b>/</b> = veya, her satır ayrı bir kural.</span>
           <textarea class="input" name="keywords" rows="3" placeholder="${autoKeywords(p.name || 'detox shot', noise)}">${p.keywords}</textarea></label>
         <label class="f full">Hariç kelimeler <span class="hint">Bu kelimelerden biri geçerse bu ürünle eşleşmez (boşlukla ayırın)</span><input class="input" name="exclude" value="${p.exclude}" placeholder="örn. mix set"></label>
@@ -50,6 +52,12 @@ export async function productForm(product, { presetName } = {}) {
     </div>`,
     actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: isNew ? 'Ürünü ekle' : 'Kaydet', value: 'save', variant: 'primary' }],
     onOpen: (d) => {
+      multiSelect(d.querySelector('#extraStores'), {
+        options: state.config.stores.map((st) => ({ id: st.id, label: st.name, color: st.color })),
+        selected: extraStores,
+        allLabel: 'Yok (yalnızca marka kuralı)',
+        onChange: (v) => { extraStores = v; },
+      });
       const read = () => {
         const f = (k) => d.querySelector(`[name=${k}]`);
         return { ...p, name: f('name').value.trim(), category: f('category').value.trim(), brand: f('brand').value.trim(), sku: f('sku').value.trim(), keywords: f('keywords').value.trim(), exclude: f('exclude').value.trim(), packMultiplier: f('packMultiplier').checked, active: f('active').checked };
@@ -94,7 +102,7 @@ export async function productForm(product, { presetName } = {}) {
     },
     onSubmit: async (_, d) => {
       const f = (k) => d.querySelector(`[name=${k}]`);
-      const next = { ...p, name: f('name').value.trim(), category: f('category').value.trim(), brand: f('brand').value.trim(), sku: f('sku').value.trim(), keywords: f('keywords').value.trim(), exclude: f('exclude').value.trim(), packMultiplier: f('packMultiplier').checked, active: f('active').checked };
+      const next = { ...p, name: f('name').value.trim(), category: f('category').value.trim(), brand: f('brand').value.trim(), sku: f('sku').value.trim(), keywords: f('keywords').value.trim(), exclude: f('exclude').value.trim(), packMultiplier: f('packMultiplier').checked, active: f('active').checked, stores: extraStores };
       if (!next.name) throw new Error('Ürün adı gerekli');
       const dup = state.config.products.find((x) => x.id !== next.id && x.name.toLocaleLowerCase('tr-TR') === next.name.toLocaleLowerCase('tr-TR') && (x.brand || '').toLocaleLowerCase('tr-TR') === next.brand.toLocaleLowerCase('tr-TR'));
       if (dup) throw new Error(next.brand ? 'Bu markada bu adla bir ürün zaten var' : 'Bu adla bir ürün zaten var');

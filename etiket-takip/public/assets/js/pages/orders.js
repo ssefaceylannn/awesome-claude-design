@@ -23,7 +23,8 @@ export async function openOrder(o, onChange) {
         <dt>Etiketteki gönderici</dt><dd>${o.sender}</dd>
         ${o.platformOrderNo ? html`<dt>Platform sipariş no</dt><dd>${o.platformOrderNo}${o.packageNo ? html` <span class="muted">· paket ${o.packageNo}</span>` : ''}</dd>` : ''}
         ${o.amount ? html`<dt>Tutar</dt><dd>${n(o.amount)} TL</dd>` : ''}
-        <dt>Kaynak</dt><dd>${o.source === 'excel' ? 'Excel' : 'Etiket PDF'}</dd>
+        <dt>Kaynak</dt><dd>${o.source === 'resend' ? 'Yeniden gönderim' : o.source === 'excel' ? 'Excel' : 'Etiket PDF'}</dd>
+        ${o.note ? html`<dt>Not</dt><dd>${o.note}</dd>` : ''}
         <dt>Alıcı</dt><dd>${personName(o.recipient) || '—'} ${o.city ? html`<span class="muted">· ${o.city}</span>` : ''}</dd>
         <dt>Kargo</dt><dd>${o.cargo || '—'} ${o.cargoCode ? html`<code>${o.cargoCode}</code>` : ''}</dd>
         <dt>Etiket</dt><dd>${o.pages || 1} sayfa · ${o.file || ''}</dd>
@@ -124,7 +125,7 @@ export default async function ordersPage(ctx) {
       ${shown.length ? shown.map((c) => {
         const o = c.order;
         return html`<tr class="click" data-k="${o.k}" data-d="${o.date}">${can('personel') ? selTd(sid(o), sel) : ''}
-          <td class="nowrap">${trDate(o.date)}</td><td class="nowrap"><b>${o.no}</b>${o.pages > 1 ? html` <span class="badge info">${o.pages} etiket</span>` : ''}</td>
+          <td class="nowrap">${trDate(o.date)}</td><td class="nowrap"><b>${o.no}</b>${o.source === 'resend' ? html` <span class="badge violet">Yeniden gönderim</span>` : ''}${o.pages > 1 ? html` <span class="badge info">${o.pages} etiket</span>` : ''}</td>
           <td>${storeTag(c.store, o.sender)}</td><td class="small">${personName(o.recipient)}</td>
           <td class="lines small">${c.lines.map((l) => html`<div><span class="q">${l.qty}x</span> ${l.productId ? pname(l.productId) : l.ignored ? html`<span class="muted">${l.raw}</span>` : html`<span class="unm">${l.raw} ⚠</span>`}</div>`)}</td>
           <td class="small">${c.rewards.length ? c.rewards.map((r) => html`<div class="gift">+${r.qty} ${pname(r.productId)}</div>`) : html`<span class="muted">—</span>`}</td>

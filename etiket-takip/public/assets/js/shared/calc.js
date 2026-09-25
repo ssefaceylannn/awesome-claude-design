@@ -22,15 +22,32 @@ export function brandRules(config) {
   return out;
 }
 
+/**
+ * Ürünün, marka kuralına ek olarak satıldığı mağazalar (ürün ayarındaki "Ayrıca satıldığı mağazalar").
+ * Ayarlanmamışsa (undefined) varsayılan: Power Vital Karamürver/Karadut ürünü adında
+ * "Daily Organic" geçen mağazalarda da satılır.
+ */
+export function productExtraStores(p, stores) {
+  if (Array.isArray(p.stores)) return p.stores;
+  const brand = fold(p.brand || '').replace(/\s+/g, '');
+  if (brand === 'powervital' && /karadut|karamurver/.test(fold(p.name || ''))) {
+    return (stores || []).filter((st) => fold(st.name).replace(/\s+/g, '').includes('dailyorganic')).map((st) => st.id);
+  }
+  return [];
+}
+
 export function createContext(config) {
   const match = createMatcher(config);
   // Marka kuralı: bir mağazanın etiketleri yalnızca o mağazada satılan markaların ürünleriyle eşleşir
   const rules = new Map(Object.entries(brandRules(config)).filter(([, ids]) => ids && ids.length).map(([b, ids]) => [fold(b), new Set(ids)]));
+  const extra = new Map((config.products || []).map((p) => [p.id, new Set(productExtraStores(p, config.stores))]));
+  // Ürün bu mağazada markasının kuralıyla mı (native) yoksa yalnızca ürüne özel ek mağaza olarak mı satılıyor
+  const native = (p, store) => { const r = p.brand && rules.get(fold(p.brand)); return !r || r.has(store.id); };
   const storeMatchers = new Map();
   const matchFor = (store) => {
     if (!rules.size || !store) return match;
     if (!storeMatchers.has(store.id)) {
-      const ok = (p) => { const r = p.brand && rules.get(fold(p.brand)); return !r || r.has(store.id); };
+      const ok = (p) => native(p, store) || extra.get(p.id).has(store.id);
       const all = config.products || [];
       storeMatchers.set(store.id, all.every(ok) ? match : createMatcher({ ...config, products: all.filter(ok) }));
     }
@@ -67,7 +84,7 @@ export function createContext(config) {
   const label = (id) => labelOf(productsById.get(id));
   // Arşivlenen kampanyalar kendi tarih aralığında geçmiş raporlarda sayılmaya devam eder
   const campaigns = (config.campaigns || []).filter((c) => c.active).map(normCampaign);
-  return { config, match, matchFor, resolveStore, products, productsById, label, labelOf, campaigns, stores: config.stores || [] };
+  return { config, match, matchFor, resolveStore, products, productsById, label, labelOf, campaigns, stores: config.stores || [], native };
 }
 
 /**
@@ -120,18 +137,29 @@ export function productEligible(c, productId) {
  * Aynı ada sahip farklı marka ürünleri (ör. iki "Karamürver ve Karadut Özü"):
  * belirsiz eşleşmede, markası mağaza adında geçen ürün seçilir.
  */
-function byBrand(m, store, sender, ctx) {
+function byBrand(m, store, sender, ctx, raw = '') {
   if (!m.candidates || m.candidates.length < 2 || m.method === 'manual') return m;
   const ns = (id) => fold((ctx.productsById.get(id) || {}).name || '').replace(/\s+/g, '');
   // Belirsiz eşleşme ya da seçilen ürünle aynı adlı (farklı yazımlı) başka marka ürünü varsa
   const pool = m.method === 'ambiguous' ? m.candidates : m.productId ? m.candidates.filter((id) => ns(id) === ns(m.productId)) : [];
   if (pool.length < 2) return m;
-  const hay = fold(`${store ? store.name : ''} ${sender || ''}`).replace(/\s+/g, '');
-  const hit = pool.filter((id) => {
-    const b = (ctx.productsById.get(id) || {}).brand;
-    return b && hay.includes(fold(b).replace(/\s+/g, ''));
-  });
-  return hit.length === 1 ? { ...m, productId: hit[0], method: 'brand', multiplier: 1 } : m;
+  const brandIn = (text) => {
+    const hay = fold(text).replace(/\s+/g, '');
+    return pool.filter((id) => {
+      const b = (ctx.productsById.get(id) || {}).brand;
+      return b && hay.includes(fold(b).replace(/\s+/g, ''));
+    });
+  };
+  // 1) Etiketteki ürün adında marka yazıyorsa o, 2) mağaza/gönderici adında geçen marka
+  for (const hit of [brandIn(raw), brandIn(`${store ? store.name : ''} ${sender || ''}`)]) {
+    if (hit.length === 1) return { ...m, productId: hit[0], method: 'brand', multiplier: 1 };
+  }
+  // 3) Mağazada markası gereği satılan ürün, yalnızca ürüne özel "ek mağaza" olarak satılana tercih edilir
+  if (store && ctx.native) {
+    const nat = pool.filter((id) => { const p = ctx.productsById.get(id); return p && ctx.native(p, store); });
+    if (nat.length === 1 && nat.length < pool.length) return { ...m, productId: nat[0], method: 'brand', multiplier: 1 };
+  }
+  return m;
 }
 
 /**
@@ -156,7 +184,7 @@ function computeSummary(o, ctx) {
   const store = ctx.resolveStore(o.sender);
   const platform = (store && store.platform) || o.platform || '';
   const toLines = (list) => (list || []).flatMap((it) => {
-    const m = byBrand(ctx.matchFor(store)(it.name), store, o.sender, ctx);
+    const m = byBrand(ctx.matchFor(store)(it.name), store, o.sender, ctx, it.name);
     if (m.parts && m.parts.length) return m.parts.map((p) => ({ raw: it.name, qty: it.qty, productId: p.productId, ignored: false, method: m.method, mult: p.qty, units: it.qty * p.qty, candidates: [] }));
     return [{ raw: it.name, qty: it.qty, productId: m.productId, ignored: !!m.ignored, method: m.method, mult: 1, units: it.qty, candidates: m.candidates }];
   });
@@ -170,7 +198,11 @@ export function computeOrder(o, ctx) {
   const store = ctx.resolveStore(o.sender);
   const platform = (store && store.platform) || o.platform || '';
   const lines = (o.items || []).flatMap((it) => {
-    const m = byBrand(ctx.matchFor(store)(it.name), store, o.sender, ctx);
+    // Ürünü elle seçilmiş satır (ör. yeniden gönderim): eşleştirme yapılmaz
+    if (it.productId && ctx.productsById.has(it.productId)) {
+      return [{ raw: it.name, qty: it.qty, productId: it.productId, ignored: false, method: 'pinned', mult: 1, units: it.qty, candidates: [] }];
+    }
+    const m = byBrand(ctx.matchFor(store)(it.name), store, o.sender, ctx, it.name);
     // Set / birleşik ad: her ürün ayrı satır olarak sayılır
     if (m.parts && m.parts.length) {
       return m.parts.map((p) => ({ raw: it.name, qty: it.qty, productId: p.productId, ignored: false, method: m.method, bundle: true, mult: p.qty, units: it.qty * p.qty, candidates: [] }));
@@ -185,6 +217,8 @@ export function computeOrder(o, ctx) {
   const distinctInOrder = counts.size + new Set(lines.filter((l) => !l.productId && !l.ignored).map((l) => l.raw)).size;
 
   const rewards = [];
+  // Yeniden gönderimde kampanya uygulanmaz (eksik/hasarlı ürünün tekrar gönderimi)
+  if (o.source === 'resend') return { order: o, store, platform, lines, rewards, resend: true };
   for (const c of ctx.campaigns) {
     if (!campaignApplies(c, o, store, platform)) continue;
     const eligible = [...counts.keys()].filter((id) => productEligible(c, id));
