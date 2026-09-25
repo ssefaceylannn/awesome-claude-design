@@ -59,11 +59,11 @@ export default async function dashboardPage(ctx) {
 
     mount(ctx.el.querySelector('#body'), html`<div class="stack">
       <div class="kpis">
-        <div class="kpi"><div class="l">Sipariş ${delta(R.orders, P.orders)}</div><div class="v">${n(R.orders)}</div><div class="s">dün ${n(P.orders)}</div></div>
-        <div class="kpi"><div class="l">Etiketteki ürün ${delta(R.labelUnits, P.labelUnits)}</div><div class="v">${n(R.labelUnits)}</div><div class="s">dün ${n(P.labelUnits)}</div></div>
-        <div class="kpi"><div class="l">Kampanyalı sipariş</div><div class="v">${n(R.campaignOrders)}</div><div class="s">+${n(R.campaignUnits)} ürün · %${pct(R.campaignOrders, R.orders)}</div></div>
-        <div class="kpi hl"><div class="l">Toplam gönderilecek ${delta(R.totalUnits, P.totalUnits)}</div><div class="v">${n(R.totalUnits)}</div><div class="s">dün ${n(P.totalUnits)}</div></div>
-        <div class="kpi"><div class="l">Barkod kontrolü</div><div class="v">%${pct(R.checked, R.orders)}</div><div class="s">${n(R.checked)} / ${n(R.orders)} sipariş</div></div>
+        <div class="kpi"><div class="l">${icon('receipt', 'kb')}Sipariş ${delta(R.orders, P.orders)}</div><div class="v">${n(R.orders)}</div><div class="s">dün ${n(P.orders)}</div></div>
+        <div class="kpi"><div class="l">${icon('tag', 'kb')}Etiketteki ürün ${delta(R.labelUnits, P.labelUnits)}</div><div class="v">${n(R.labelUnits)}</div><div class="s">dün ${n(P.labelUnits)}</div></div>
+        <div class="kpi"><div class="l">${icon('gift', 'kb')}Kampanyalı sipariş</div><div class="v">${n(R.campaignOrders)}</div><div class="s">+${n(R.campaignUnits)} ürün · %${pct(R.campaignOrders, R.orders)}</div></div>
+        <div class="kpi hl"><div class="l">${icon('factory', 'kb')}Toplam gönderilecek ${delta(R.totalUnits, P.totalUnits)}</div><div class="v">${n(R.totalUnits)}</div><div class="s">dün ${n(P.totalUnits)}</div></div>
+        <div class="kpi"><div class="l">${icon('scan', 'kb')}Barkod kontrolü</div><div class="v">%${pct(R.checked, R.orders)}</div><div class="s">${n(R.checked)} / ${n(R.orders)} sipariş</div></div>
       </div>
       <div class="grid g-main">
         <div class="card"><div class="card-h"><h2>Son 14 gün</h2><span class="sub">Gönderilecek ürün adedi</span><span class="spacer"></span>

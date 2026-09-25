@@ -39,7 +39,7 @@ function sidebar() {
       <div><b>${state.config.settings.companyName || 'Etiket Takip'}</b><small>Sipariş & Üretim Planlama</small></div></div>
     <nav class="nav">${NAV.map((g) => {
       const items = g.items.filter((i) => !i.role || can(i.role));
-      return items.length ? html`<div class="nav-group"><span>${g.group}</span>${items.map((i) => html`<a href="#/${i.id}" data-id="${i.id}">${icon(i.icon)}<span>${i.label}</span><span class="count hidden" data-count="${i.id}"></span></a>`)}</div>` : '';
+      return items.length ? html`<div class="nav-group"><span tabindex="0">${g.group}${icon('chevD', 'caret')}</span><div class="nav-items">${items.map((i) => html`<a href="#/${i.id}" data-id="${i.id}">${icon(i.icon)}<span>${i.label}</span><span class="count hidden" data-count="${i.id}"></span></a>`)}</div></div>` : '';
     })}</nav>
     <div class="me"><div class="avatar">${initials(u.username)}</div><div><b>${personName(u.username)}</b><small>${ROLE_LABEL[u.role] || u.role}</small></div>
       <button id="themeBtn" title="Tema">${icon('moon')}</button>
@@ -81,12 +81,14 @@ async function route() {
   if (item.role && !can(item.role)) { toast('Bu sayfaya erişim yetkiniz yok', 'err'); return navigate('dashboard'); }
   document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('active', a.dataset.id === id));
   $('#app').classList.remove('nav-open');
+  // Üst menüde tıklanan bağlantı odakta kalırsa açılır menü açık kalmasın
+  if (document.activeElement && document.activeElement.closest && document.activeElement.closest('.nav')) document.activeElement.blur();
   if (cleanup) { try { cleanup(); } catch { /* yok */ } cleanup = null; }
   current = id;
   const top = $('#topbar');
   mount(top, html`<button class="btn ghost icon menu-btn" id="menuBtn" aria-label="Menü">${icon('menu')}</button>
     <div class="title"><h1>${item.label}</h1><small id="pageSub"></small></div><div id="gsearch"></div><div class="actions" id="pageActions"></div>
-    <div class="corp-logo" title="Apidemia Pharma A.Ş."><img src="/assets/img/firma-logo.svg" alt="Apidemia Pharma A.Ş." width="132" height="34"></div>`);
+    <div class="corp-logo" title="Apidemia Pharma A.Ş."><img src="/assets/img/firma-logo.png" alt="Apidemia Pharma A.Ş." width="132" height="34"></div>`);
   $('#menuBtn').addEventListener('click', () => $('#app').classList.add('nav-open'));
   mountProductSearch($('#gsearch'), (p) => navigate('product', { id: p.id }));
   // Her sayfa için yeni bir kap: önceki sayfanın olay dinleyicileri taşınmasın
