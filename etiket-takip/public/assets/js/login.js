@@ -33,7 +33,7 @@ form.addEventListener('submit', async (e) => {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || 'Giriş başarısız');
     const next = new URLSearchParams(location.search).get('next');
-    location.href = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
+    location.href = next && /^\/(?![\/\\])/.test(next) && !/[\\\s]/.test(next) ? next : '/';
   } catch (err) {
     show(err.message);
     btn.disabled = false;

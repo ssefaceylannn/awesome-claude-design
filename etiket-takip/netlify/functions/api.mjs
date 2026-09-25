@@ -1,6 +1,6 @@
 // Etiket Takip API — tüm /api/* istekleri buradan geçer.
 import { webcrypto } from 'node:crypto';
-import { COOKIE, getSecret, parseUsers, readCookie, safeEqual, signToken, verifyToken } from '../lib/auth.js';
+import { COOKIE, getSecret, parseUsers, passwordTag, readCookie, safeEqual, signToken, verifyToken } from '../lib/auth.js';
 import { del, getJSON, listKeys, pmap, setJSON, update } from '../lib/store.js';
 import { fold, hashStr, isYmd, orderKey } from '../../public/assets/js/shared/text.js';
 import { DEFAULT_NOISE } from '../../public/assets/js/shared/matcher.js';
@@ -180,14 +180,20 @@ async function getConfig() {
   return c ? { ...DEFAULT_CONFIG(), ...c, settings: { ...DEFAULT_CONFIG().settings, ...(c.settings || {}) } } : DEFAULT_CONFIG();
 }
 
+// IP adresi kaydedilmez, yalnızca özeti (deneme sayacı anahtarı için)
+async function sha(text) {
+  const buf = await (globalThis.crypto || webcrypto).subtle.digest('SHA-256', new TextEncoder().encode('etiket-takip-ip:' + text));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function session(req) {
   const secret = await getSecret(env);
   const tok = readCookie(req.headers.get('cookie'), COOKIE);
   const s = await verifyToken(tok, secret);
   if (!s) return null;
-  // Kullanıcı USERS listesinden silindiyse veya rolü değiştiyse oturumu geçersiz say
+  // Kullanıcı USERS listesinden silindiyse, rolü veya şifresi değiştiyse oturumu geçersiz say
   const u = parseUsers(env('USERS')).find((x) => x.username === s.u);
-  if (!u) return null;
+  if (!u || !safeEqual(s.pw || '', await passwordTag(u.password, secret))) return null;
   return { u: u.username, r: u.role };
 }
 
@@ -217,6 +223,11 @@ async function login(req) {
 
   const lockKey = 'auth/' + (fold(username) || '_');
   const lock = await getJSON(lockKey, { fails: 0, until: 0 });
+  // Aynı IP'den çok sayıda hatalı deneme (farklı kullanıcı adlarıyla şifre tahmini) → 15 dk bekleme
+  const ip = req.headers.get('x-nf-client-connection-ip') || req.headers.get('x-forwarded-for') || '';
+  const ipKey = 'auth/ip-' + (await sha(ip.split(',')[0].trim() || '_')).slice(0, 24);
+  const ipLock = await getJSON(ipKey, { fails: 0, until: 0, at: 0 });
+  if (ipLock.until > Date.now()) throw new HttpError(429, 'Bu bağlantıdan çok fazla hatalı deneme yapıldı. 15 dakika sonra tekrar deneyin.');
   if (lock.until > Date.now()) {
     const min = Math.ceil((lock.until - Date.now()) / 60000);
     throw new HttpError(429, `Çok fazla hatalı deneme. ${min} dakika sonra tekrar deneyin.`);
@@ -226,12 +237,15 @@ async function login(req) {
   if (!ok) {
     const fails = lock.fails + 1;
     await setJSON(lockKey, { fails: fails >= 5 ? 0 : fails, until: fails >= 5 ? Date.now() + 5 * 60e3 : 0 });
+    const ipFails = (Date.now() - ipLock.at < 3600e3 ? ipLock.fails : 0) + 1;
+    await setJSON(ipKey, { fails: ipFails >= 20 ? 0 : ipFails, until: ipFails >= 20 ? Date.now() + 15 * 60e3 : 0, at: Date.now() });
     await new Promise((r) => setTimeout(r, 400));
     throw new HttpError(401, 'Kullanıcı adı veya şifre hatalı');
   }
   if (lock.fails) await del(lockKey);
   const maxAge = b.remember ? 30 * 86400 : 12 * 3600;
-  const token = await signToken({ u: u.username, r: u.role, exp: Date.now() + maxAge * 1000 }, await getSecret(env));
+  const secret = await getSecret(env);
+  const token = await signToken({ u: u.username, r: u.role, pw: await passwordTag(u.password, secret), exp: Date.now() + maxAge * 1000 }, secret);
   await audit({ u: u.username }, 'giriş', b.remember ? 'Beni hatırla' : '');
   return json({ user: { username: u.username, role: u.role } }, 200, { 'set-cookie': cookie(token, maxAge) });
 }

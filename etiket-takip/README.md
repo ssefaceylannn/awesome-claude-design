@@ -97,6 +97,27 @@ Ekranda sütun başlıklarına tıklayarak veya sıralama kutusundan sıralayabi
 - *Ayarlar → Tam yedek indir* ile tüm veriyi JSON olarak alın; aynı ekrandan geri yükleyebilirsiniz.
 - Giriş, yükleme, silme ve ayar değişiklikleri *İşlem geçmişi*nde kullanıcı adıyla tutulur. 5 hatalı girişte hesap 5 dakika kilitlenir.
 
+## Gizlilik ve güvenlik
+
+**Hangi müşteri bilgisi nerede?**
+- PDF ve Excel dosyaları **yalnızca tarayıcıda** okunur; dosyanın kendisi hiçbir yere yüklenmez.
+- Sunucuya (Netlify Blobs, sitenize ait depolama) giden sipariş bilgileri: sipariş/kargo numarası, gönderici mağaza, **alıcı adı**, il/ilçe, kargo firması, ürün satırları ve (Excel'de varsa) sipariş tutarı. **Adres ve telefon gönderilmez, saklanmaz.**
+- Veriler kodda veya GitHub deposunda **yoktur**; depoda yalnızca program kodu bulunur.
+- Site başka hiçbir servise istek atmaz: yazı tipi dahil her şey siteyle birlikte sunulur, analiz/izleme kodu yoktur. Tarayıcıya verilen güvenlik politikası (CSP) dış sitelere veri gönderimini de engeller.
+- Kayıtlar saklama süresi (varsayılan 365 gün) dolunca otomatik silinir. Tam yedek dosyası alıcı adlarını içerir; güvenli yerde saklayın.
+
+**Erişim**
+- Sitenin tüm sayfaları ve verileri yalnızca giriş yapmış kullanıcılara açıktır (kenar fonksiyonu + her API isteğinde oturum kontrolü). Roller: yönetici / personel / izleyici.
+- Oturum çerezi imzalıdır, JavaScript'ten okunamaz (HttpOnly), yalnızca HTTPS'te gönderilir. Kullanıcı USERS listesinden silinirse, rolü ya da **şifresi değişirse** açık oturumları hemen geçersiz olur.
+- Kaba kuvvet koruması: aynı kullanıcı adına 5 hatalı denemede 5 dk, aynı bağlantıdan 20 hatalı denemede 15 dk bekleme (IP adresi kaydedilmez, yalnızca özeti).
+- Başka sitelerden istek sahteciliğine (CSRF) ve sayfanın başka sitede çerçeve içine alınmasına karşı korumalıdır.
+- PDF okuyucuda, kötü amaçlı bir PDF'in kod çalıştırmasına izin veren bilinen açık (CVE-2024-4367) kapatılmıştır.
+
+**Sizin yapmanız gerekenler**
+- Netlify'da `AUTH_SECRET` değişkenine en az 32 karakterlik rastgele bir değer girin.
+- Her personele ayrı kullanıcı ve güçlü (en az 10 karakter) şifre verin; ayrılan personeli USERS'tan silin.
+- Netlify hesabınızda iki adımlı doğrulamayı açın (verilere Netlify hesabı üzerinden de erişilebilir).
+
 ## Klasör yapısı
 
 ```

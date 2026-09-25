@@ -47,6 +47,11 @@ export async function getSecret(env) {
   return b64u(await crypto.subtle.digest('SHA-256', enc.encode('etiket-takip:' + u)));
 }
 
+/** Şifrenin kısa parmak izi (oturuma yazılır; şifre değişirse eski oturumlar geçersiz olur) */
+export async function passwordTag(password, secret) {
+  return (await hmac(secret, 'pw:' + password)).slice(0, 16);
+}
+
 export async function signToken(payload, secret) {
   const body = b64u(enc.encode(JSON.stringify(payload)));
   return body + '.' + (await hmac(secret, body));
@@ -90,7 +95,7 @@ export function parseUsers(str) {
 export function readCookie(header, name) {
   for (const part of String(header || '').split(';')) {
     const i = part.indexOf('=');
-    if (i > 0 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
+    if (i > 0 && part.slice(0, i).trim() === name) { try { return decodeURIComponent(part.slice(i + 1).trim()); } catch { return null; } }
   }
   return null;
 }

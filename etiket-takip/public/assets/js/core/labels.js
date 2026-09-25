@@ -27,7 +27,7 @@ export async function readLabels(files, { manualDate, onProgress } = {}) {
       const date = manualDate || dateFromFileName(f.name) || today();
       const pages = [];
       try {
-        const doc = await lib.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise;
+        const doc = await lib.getDocument({ data: new Uint8Array(await f.arrayBuffer()), isEvalSupported: false, enableXfa: false, disableFontFace: true }).promise;
         for (let i = 1; i <= doc.numPages; i++) {
           const page = await doc.getPage(i);
           const vp = page.getViewport({ scale: 1 });
