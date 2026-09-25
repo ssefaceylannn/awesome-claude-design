@@ -20,5 +20,5 @@ export default async (request) => {
 
 export const config = {
   path: '/*',
-  excludedPath: ['/login.html', '/api/login', '/api/logout', '/assets/css/*', '/assets/js/login.js', '/assets/js/theme.js', '/assets/fonts/*', '/favicon.svg'],
+  excludedPath: ['/login.html', '/assets/img/*', '/api/login', '/api/logout', '/assets/css/*', '/assets/js/login.js', '/assets/js/theme.js', '/assets/fonts/*', '/favicon.svg'],
 };

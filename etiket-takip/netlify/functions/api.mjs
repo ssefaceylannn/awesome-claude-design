@@ -224,7 +224,8 @@ async function login(req) {
   const lockKey = 'auth/' + (fold(username) || '_');
   const lock = await getJSON(lockKey, { fails: 0, until: 0 });
   // Aynı IP'den çok sayıda hatalı deneme (farklı kullanıcı adlarıyla şifre tahmini) → 15 dk bekleme
-  const ip = req.headers.get('x-nf-client-connection-ip') || req.headers.get('x-forwarded-for') || '';
+  // Netlify'ın kendi başlığı güvenilirdir; x-forwarded-for istemci tarafından uydurulabilir (yalnızca yerelde yedek)
+  const ip = req.headers.get('x-nf-client-connection-ip') || (globalThis.Netlify?.context ? '' : req.headers.get('x-forwarded-for')) || '';
   const ipKey = 'auth/ip-' + (await sha(ip.split(',')[0].trim() || '_')).slice(0, 24);
   const ipLock = await getJSON(ipKey, { fails: 0, until: 0, at: 0 });
   if (ipLock.until > Date.now()) throw new HttpError(429, 'Bu bağlantıdan çok fazla hatalı deneme yapıldı. 15 dakika sonra tekrar deneyin.');
@@ -235,10 +236,15 @@ async function login(req) {
   const u = users.find((x) => x.username === username);
   const ok = u ? safeEqual(u.password, password) : (safeEqual('x'.repeat(password.length), password + '!'), false);
   if (!ok) {
-    const fails = lock.fails + 1;
-    await setJSON(lockKey, { fails: fails >= 5 ? 0 : fails, until: fails >= 5 ? Date.now() + 5 * 60e3 : 0 });
-    const ipFails = (Date.now() - ipLock.at < 3600e3 ? ipLock.fails : 0) + 1;
-    await setJSON(ipKey, { fails: ipFails >= 20 ? 0 : ipFails, until: ipFails >= 20 ? Date.now() + 15 * 60e3 : 0, at: Date.now() });
+    // Sayaçlar atomik artırılır: eşzamanlı çok sayıda deneme sayacı ezip kilidi atlatamaz
+    await update(lockKey, (cur) => {
+      const fails = (cur.fails || 0) + 1;
+      return { fails: fails >= 5 ? 0 : fails, until: fails >= 5 ? Date.now() + 5 * 60e3 : 0 };
+    }, { fails: 0, until: 0 }).catch(() => {});
+    await update(ipKey, (cur) => {
+      const ipFails = (Date.now() - (cur.at || 0) < 3600e3 ? cur.fails || 0 : 0) + 1;
+      return { fails: ipFails >= 20 ? 0 : ipFails, until: ipFails >= 20 ? Date.now() + 15 * 60e3 : 0, at: Date.now() };
+    }, { fails: 0, until: 0, at: 0 }).catch(() => {});
     await new Promise((r) => setTimeout(r, 400));
     throw new HttpError(401, 'Kullanıcı adı veya şifre hatalı');
   }
@@ -572,15 +578,39 @@ async function deleteBatch(bid, user) {
   return batch.orders.length;
 }
 
+// Yedekten gelen sipariş kaydı: yalnızca bilinen alanlar, sınırlı uzunlukta
+function restoredOrder(o, date) {
+  if (!o || typeof o !== 'object' || typeof o.k !== 'string' || !o.k || o.k.length > 200) return null;
+  const lines = (arr) => (Array.isArray(arr) ? arr : []).map((it) => ({ name: str(it && it.name, 200), qty: int(it && it.qty, 1, 100000, 1) })).filter((it) => it.name).slice(0, 500);
+  const items = lines(o.items);
+  const rec = {
+    k: o.k, no: str(o.no, 60), sender: str(o.sender, 120), platform: fold(o.platform).replace(/\s/g, '').slice(0, 30), recipient: str(o.recipient, 120),
+    city: str(o.city, 80), cargo: str(o.cargo, 60), cargoCode: str(o.cargoCode, 60), items, pages: int(o.pages, 0, 100, 1), file: str(o.file, 200),
+    date, batch: str(o.batch, 40), by: str(o.by, 60), at: str(o.at, 40), checked: !!o.checked,
+    source: ['excel', 'pdf', 'kampanya-hesaplama'].includes(o.source) ? o.source : 'pdf',
+  };
+  for (const f of ['platformOrderNo', 'packageNo']) if (o[f]) rec[f] = str(o[f], 60);
+  if (o.amount) rec.amount = Math.max(0, Math.min(1e9, parseFloat(o.amount) || 0));
+  if (o.checked) { rec.checkedAt = str(o.checkedAt, 40); rec.checkedBy = str(o.checkedBy, 60); }
+  for (const f of ['mergedBy', 'fixedBy']) if (o[f]) rec[f] = str(o[f], 60);
+  if (o.fixedAt) rec.fixedAt = str(o.fixedAt, 40);
+  if (o.summary) { rec.summary = true; rec.bonus = lines(o.bonus); rec.orderCount = int(o.orderCount, 0, 1e7, 0); }
+  return rec;
+}
+
 // ------------------------------------------------------------------ yönlendirici
 export default async (req) => {
   const url = new URL(req.url);
   const path = url.pathname.replace(/^\/api\/?/, '').replace(/\/$/, '');
   const m = req.method;
   try {
-    if (m !== 'GET') {
+    if (m !== 'GET' && m !== 'HEAD') {
+      // Başka sitelerden gelen yazma isteklerini reddet (CSRF). Bozuk/"null" Origin de reddedilir.
       const origin = req.headers.get('origin');
-      if (origin && new URL(origin).host !== url.host) throw new HttpError(403, 'Geçersiz istek kaynağı');
+      let host = null;
+      try { host = origin ? new URL(origin).host : url.host; } catch { /* geçersiz */ }
+      if (host !== url.host) throw new HttpError(403, 'Geçersiz istek kaynağı');
+      if (req.headers.get('sec-fetch-site') === 'cross-site') throw new HttpError(403, 'Geçersiz istek kaynağı');
     }
     if (path === 'login') return await login(req);
     if (path === 'logout') return json({ ok: true }, 200, { 'set-cookie': cookie('', 0) });
@@ -613,7 +643,7 @@ export default async (req) => {
 
     if (path === 'check' && m === 'POST') {
       const b = await body(req);
-      if (!isYmd(b.date) || !b.k) throw new HttpError(400, 'Eksik bilgi');
+      if (!isYmd(b.date) || typeof b.k !== 'string' || !b.k || b.k.length > 200) throw new HttpError(400, 'Eksik bilgi');
       let found = null;
       await update(`day/${b.date}`, (day) => {
         const o = day && day.orders.find((x) => x.k === b.k);
@@ -669,6 +699,7 @@ export default async (req) => {
     }
 
     if (path === 'audit' && m === 'GET') {
+      need(user, 'admin');
       const month = url.searchParams.get('month') || todayTR().slice(0, 7);
       if (!/^\d{4}-\d{2}$/.test(month)) throw new HttpError(400, 'Geçersiz ay');
       return json({ events: (await getJSON(`audit/${month}`, [])).slice().reverse() });
@@ -744,17 +775,28 @@ export default async (req) => {
         const clean = { stores: SANITIZE.stores(c.stores || []), products: SANITIZE.products(c.products || []), campaigns: SANITIZE.campaigns(c.campaigns || []), campaignTemplates: SANITIZE.campaignTemplates(c.campaignTemplates || []), aliases: SANITIZE.aliases(c.aliases || {}), settings: SANITIZE.settings(c.settings || {}) };
         await update('config', (cur) => ({ ...cur, ...clean, updatedAt: nowIso(), updatedBy: user.u }), DEFAULT_CONFIG);
       }
-      if (b.labelnames && typeof b.labelnames === 'object') await update('labelnames', (all) => ({ ...all, ...b.labelnames }), {});
+      if (b.labelnames && typeof b.labelnames === 'object' && !Array.isArray(b.labelnames)) {
+        const clean = {};
+        for (const [k, v] of Object.entries(b.labelnames).slice(0, 50000)) {
+          const key = fold(k);
+          if (!key || !v || typeof v !== 'object' || key === '__proto__') continue;
+          clean[key] = { raw: str(v.raw, 200), qty: int(v.qty, 0, 1e9, 0), lines: int(v.lines, 0, 1e9, 0), ...(isYmd(v.firstSeen) ? { firstSeen: v.firstSeen } : {}), ...(isYmd(v.lastSeen) ? { lastSeen: v.lastSeen } : {}), ...(v.archive ? { archive: true } : {}) };
+        }
+        await update('labelnames', (all) => ({ ...all, ...clean }), {});
+      }
       let restored = 0;
       for (const d of Array.isArray(b.days) ? b.days : []) {
         if (!isYmd(d.date) || !Array.isArray(d.orders)) continue;
         await update(`day/${d.date}`, (day) => {
           const have = new Set(day.orders.map((x) => x.k));
-          for (const o of d.orders) if (o && o.k && !have.has(o.k)) { day.orders.push({ ...o, date: d.date }); restored++; }
+          for (const o of d.orders.slice(0, 20000)) {
+            const rec = restoredOrder(o, d.date);
+            if (rec && !have.has(rec.k)) { day.orders.push(rec); have.add(rec.k); restored++; }
+          }
           return day;
         }, () => ({ date: d.date, orders: [] }));
         const byBucket = new Map();
-        for (const o of d.orders) { if (!o || !o.k || o.summary) continue; const bk = bucketKey(o.no ?? o.k.split('|').pop()); if (!byBucket.has(bk)) byBucket.set(bk, []); byBucket.get(bk).push(o.k); }
+        for (const o of d.orders) { if (!o || typeof o.k !== 'string' || !o.k || o.summary) continue; const bk = bucketKey(o.no ?? o.k.split('|').pop()); if (!byBucket.has(bk)) byBucket.set(bk, []); byBucket.get(bk).push(o.k); }
         await pmap([...byBucket.entries()], 12, ([bk, ks]) => update(bk, (idx) => { for (const k of ks) if (!idx[k]) idx[k] = d.date; return idx; }, {}));
       }
       if (b.config || restored) await audit(user, 'yedekten geri yükleme', `${restored} sipariş${b.config ? ' + ayarlar' : ''}`);
@@ -765,7 +807,8 @@ export default async (req) => {
   } catch (e) {
     const status = e.status || 500;
     if (status >= 500) console.error(e);
-    return json({ error: status >= 500 && !e.status ? 'Sunucu hatası: ' + e.message : e.message }, status);
+    // Beklenmeyen hataların iç ayrıntısı istemciye gönderilmez (yalnızca sunucu kaydına yazılır)
+    return json({ error: status >= 500 && !e.status ? 'Sunucu hatası, lütfen tekrar deneyin.' : e.message }, status);
   }
 };
 

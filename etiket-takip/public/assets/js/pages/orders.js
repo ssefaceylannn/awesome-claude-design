@@ -1,5 +1,5 @@
 // Sipariş listesi: arama, filtre, detay, silme.
-import { html, mount, icon, n, trDate, trDateTime, toast, modal, confirmDialog, emptyState, storeTag, pBadge, pLabel, rangeLabel, busy, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
+import { html, mount, personName, icon, n, trDate, trDateTime, toast, modal, confirmDialog, emptyState, storeTag, pBadge, pLabel, rangeLabel, busy, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
 import { api, state, fetchOrders, getRange, isAdmin, can, invalidateOrders, patchCachedOrder } from '../core/api.js';
 import { aggregate, computeOrder } from '../shared/calc.js';
 import { rangePicker, storeFilters, filterLabel } from '../core/widgets.js';
@@ -24,11 +24,11 @@ export async function openOrder(o, onChange) {
         ${o.platformOrderNo ? html`<dt>Platform sipariş no</dt><dd>${o.platformOrderNo}${o.packageNo ? html` <span class="muted">· paket ${o.packageNo}</span>` : ''}</dd>` : ''}
         ${o.amount ? html`<dt>Tutar</dt><dd>${n(o.amount)} TL</dd>` : ''}
         <dt>Kaynak</dt><dd>${o.source === 'excel' ? 'Excel' : 'Etiket PDF'}</dd>
-        <dt>Alıcı</dt><dd>${o.recipient || '—'} ${o.city ? html`<span class="muted">· ${o.city}</span>` : ''}</dd>
+        <dt>Alıcı</dt><dd>${personName(o.recipient) || '—'} ${o.city ? html`<span class="muted">· ${o.city}</span>` : ''}</dd>
         <dt>Kargo</dt><dd>${o.cargo || '—'} ${o.cargoCode ? html`<code>${o.cargoCode}</code>` : ''}</dd>
         <dt>Etiket</dt><dd>${o.pages || 1} sayfa · ${o.file || ''}</dd>
-        <dt>Yükleyen</dt><dd>${o.by} · ${trDateTime(o.at)}</dd>
-        <dt>Barkod kontrolü</dt><dd>${o.checked ? html`<span class="badge ok">${icon('check')} ${o.checkedBy} · ${trDateTime(o.checkedAt)}</span>` : html`<span class="badge">Kontrol edilmedi</span>`}</dd>
+        <dt>Yükleyen</dt><dd>${personName(o.by)} · ${trDateTime(o.at)}</dd>
+        <dt>Barkod kontrolü</dt><dd>${o.checked ? html`<span class="badge ok">${icon('check')} ${personName(o.checkedBy)} · ${trDateTime(o.checkedAt)}</span>` : html`<span class="badge">Kontrol edilmedi</span>`}</dd>
       </dl>
       <div class="card"><table class="t"><thead><tr><th>Etiketteki ürün</th><th class="num">Adet</th><th>Katalogdaki ürün</th><th class="num">Sayılan</th></tr></thead><tbody>
         ${c.lines.map((l) => html`<tr><td>${l.raw}</td><td class="num">${l.qty}</td><td>${l.ignored ? html`<span class="muted">yoksayılır</span>` : l.productId ? html`<b>${pname(l.productId)}</b> <span class="muted xs">${l.method === 'manual' ? 'elle' : 'otomatik'}</span>` : html`<span class="badge err">eşleşmedi</span>`}</td><td class="num">${l.ignored ? 0 : l.units}</td></tr>`)}
@@ -125,7 +125,7 @@ export default async function ordersPage(ctx) {
         const o = c.order;
         return html`<tr class="click" data-k="${o.k}" data-d="${o.date}">${can('personel') ? selTd(sid(o), sel) : ''}
           <td class="nowrap">${trDate(o.date)}</td><td class="nowrap"><b>${o.no}</b>${o.pages > 1 ? html` <span class="badge info">${o.pages} etiket</span>` : ''}</td>
-          <td>${storeTag(c.store, o.sender)}</td><td class="small">${o.recipient}</td>
+          <td>${storeTag(c.store, o.sender)}</td><td class="small">${personName(o.recipient)}</td>
           <td class="lines small">${c.lines.map((l) => html`<div><span class="q">${l.qty}x</span> ${l.productId ? pname(l.productId) : l.ignored ? html`<span class="muted">${l.raw}</span>` : html`<span class="unm">${l.raw} ⚠</span>`}</div>`)}</td>
           <td class="small">${c.rewards.length ? c.rewards.map((r) => html`<div class="gift">+${r.qty} ${pname(r.productId)}</div>`) : html`<span class="muted">—</span>`}</td>
           <td>${o.checked ? html`<span class="badge ok">${icon('check')}</span>` : html`<span class="muted">—</span>`}</td></tr>`;
@@ -180,8 +180,8 @@ export default async function ordersPage(ctx) {
       const rows = [];
       for (const c of filtered()) {
         const o = c.order;
-        for (const l of c.lines) rows.push([trDate(o.date), o.no, c.store ? c.store.name : o.sender, pLabel(c.platform), o.recipient, l.raw, l.productId ? pname(l.productId) : l.ignored ? '(yoksayıldı)' : '⚠ eşleşmedi', l.ignored ? 0 : l.units, '', o.cargoCode, o.checked ? 'Evet' : '']);
-        for (const r of c.rewards) rows.push([trDate(o.date), o.no, c.store ? c.store.name : o.sender, pLabel(c.platform), o.recipient, '', pname(r.productId), r.qty, r.name, o.cargoCode, o.checked ? 'Evet' : '']);
+        for (const l of c.lines) rows.push([trDate(o.date), o.no, c.store ? c.store.name : o.sender, pLabel(c.platform), personName(o.recipient), l.raw, l.productId ? pname(l.productId) : l.ignored ? '(yoksayıldı)' : '⚠ eşleşmedi', l.ignored ? 0 : l.units, '', o.cargoCode, o.checked ? 'Evet' : '']);
+        for (const r of c.rewards) rows.push([trDate(o.date), o.no, c.store ? c.store.name : o.sender, pLabel(c.platform), personName(o.recipient), '', pname(r.productId), r.qty, r.name, o.cargoCode, o.checked ? 'Evet' : '']);
       }
       await exportTable(`siparisler_${from}_${to}.xlsx`, `Siparişler ${rangeLabel(from, to)}`, [
         { label: 'Tarih', width: 12 }, { label: 'Sipariş No', width: 20 }, { label: 'Mağaza', width: 26 }, { label: 'Platform', width: 12 }, { label: 'Alıcı', width: 24 },

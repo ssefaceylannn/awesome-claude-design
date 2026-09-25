@@ -93,8 +93,9 @@ export function filterLabel(filter) {
 /** Basit SVG sütun grafik (yığılmış iki seri) */
 export function barChart(data, { h = 200, onClick } = {}) {
   const W = 760, pad = { l: 36, r: 8, t: 12, b: 26 };
-  const max = Math.max(1, ...data.map((d) => d.a + d.b));
-  const nice = (() => { const p = 10 ** Math.floor(Math.log10(max)); for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= max) return m * p; return max; })();
+  // Eksen 4 eşit adımdan oluşur; adım tam sayı olmalı (boş grafikte 0-1-1-1 gibi tekrar eden etiketler çıkmasın)
+  const max = Math.max(4, ...data.map((d) => d.a + d.b));
+  const nice = (() => { const r = max / 4, p = 10 ** Math.floor(Math.log10(r)); for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= r && Number.isInteger(m * p)) return m * p * 4; return Math.ceil(r) * 4; })();
   const iw = W - pad.l - pad.r, ih = h - pad.t - pad.b;
   const bw = iw / data.length;
   const y = (v) => pad.t + ih - (v / nice) * ih;

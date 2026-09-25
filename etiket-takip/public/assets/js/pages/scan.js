@@ -1,5 +1,5 @@
 // Barkod kontrol: paketlenen siparişi okut, içeriğini göster, "kontrol edildi" işaretle.
-import { html, mount, icon, n, pct, trDate, trDateTime, toast, addDays, storeTag, emptyState } from '../core/ui.js';
+import { html, mount, personName, icon, n, pct, trDate, trDateTime, toast, addDays, storeTag, emptyState } from '../core/ui.js';
 import { api, state, fetchOrders, getRange, patchCachedOrder, invalidateOrders } from '../core/api.js';
 import { computeOrder } from '../shared/calc.js';
 import { rangePicker } from '../core/widgets.js';
@@ -63,7 +63,7 @@ export default async function scanPage(ctx) {
             return html`<tr><td class="nowrap"><b>${o.no}</b><div class="muted xs">${o.cargoCode}</div></td><td>${storeTag(c.store, o.sender)}</td><td class="lines small">${c.lines.map((l) => html`<div><span class="q">${l.units}x</span> ${l.productId ? pname(l.productId) : l.raw}</div>`)}${c.rewards.map((r) => html`<div class="gift">+${r.qty} ${pname(r.productId)}</div>`)}</td></tr>`;
           }) : html`<tr><td>${emptyState('check', todays.length ? 'Hepsi kontrol edildi' : 'Bu gün için sipariş yok', '')}</td></tr>`}</tbody></table></div></div>
         <div class="card"><div class="card-h"><h2>Son okutulanlar</h2></div>
-          <div class="tw" style="max-height:480px"><table class="t"><tbody>${recent.length ? recent.map((o) => html`<tr><td><b>${o.no}</b></td><td class="small muted">${o.checkedBy}</td><td class="small muted nowrap">${trDateTime(o.checkedAt).slice(11)}</td>
+          <div class="tw" style="max-height:480px"><table class="t"><tbody>${recent.length ? recent.map((o) => html`<tr><td><b>${o.no}</b></td><td class="small muted">${personName(o.checkedBy)}</td><td class="small muted nowrap">${trDateTime(o.checkedAt).slice(11)}</td>
             <td class="num"><button class="btn sm ghost" data-undo="${o.k}" data-d="${o.date}">Geri al</button></td></tr>`) : html`<tr><td class="muted small" style="padding:16px">Henüz okutma yok</td></tr>`}</tbody></table></div></div>
       </div>
     </div>`);
@@ -93,7 +93,7 @@ export default async function scanPage(ctx) {
     const cc = computeOrder(rec, state.ctx);
     mount(box, html`<div class="scan-res ${again ? 'again' : 'ok'}">
       <div class="row wrap"><h2>${again ? html`${icon('alert')} Daha önce okutuldu` : html`${icon('check')} Kontrol edildi`} — ${rec.no}</h2><span class="spacer"></span>${storeTag(cc.store, rec.sender)}</div>
-      <div class="muted small" style="margin-top:4px">${rec.recipient} · ${trDate(rec.date)}${again ? ` · ilk okutma ${rec.checkedBy}, ${trDateTime(rec.checkedAt)}` : ''}${found.length > 1 ? ` · ${found.length} eşleşme, en yenisi gösteriliyor` : ''}</div>
+      <div class="muted small" style="margin-top:4px">${personName(rec.recipient)} · ${trDate(rec.date)}${again ? ` · ilk okutma ${personName(rec.checkedBy)}, ${trDateTime(rec.checkedAt)}` : ''}${found.length > 1 ? ` · ${found.length} eşleşme, en yenisi gösteriliyor` : ''}</div>
       <ul>${cc.lines.map((l) => html`<li><b>${l.units}×</b> ${l.productId ? pname(l.productId) : html`<span class="unm">${l.raw}</span>`}</li>`)}
       ${cc.rewards.map((r) => html`<li class="gift"><b>+${r.qty}×</b> ${pname(r.productId)} <span class="small">(${r.name})</span></li>`)}</ul>
     </div>`);

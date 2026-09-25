@@ -1,5 +1,5 @@
 // Genel bakış: seçili günün özeti, 14 günlük eğilim, uyarılar.
-import { html, mount, icon, n, pct, addDays, longDate, trDate, trDateTime, today, emptyState, pBadge, parseYmd } from '../core/ui.js';
+import { html, mount, personName, icon, n, pct, addDays, longDate, trDate, trDateTime, today, emptyState, pBadge, parseYmd } from '../core/ui.js';
 import { api, state, fetchOrders, getRange, setRange, can } from '../core/api.js';
 import { aggregate, productionRows, brandResolved } from '../shared/calc.js';
 import { rangePicker, barChart } from '../core/widgets.js';
@@ -15,7 +15,7 @@ export default async function dashboardPage(ctx) {
   const greet = hour < 6 ? 'İyi geceler' : hour < 12 ? 'Günaydın' : hour < 18 ? 'İyi günler' : 'İyi akşamlar';
   mount(ctx.actions, html`${can('personel') ? html`<a class="btn" href="#/upload">${icon('upload')}Etiket yükle</a>` : ''}<a class="btn primary" href="#/production">${icon('factory')}Üretim listesi</a>`);
   mount(ctx.el, html`<div class="stack">
-    <div class="row wrap"><div><h2 style="font-size:1.2rem">${greet}, ${state.me.username}</h2><div class="muted small" id="dayLabel"></div></div><span class="spacer"></span><div id="picker"></div></div>
+    <div class="row wrap"><div><h2 style="font-size:1.2rem">${greet}, ${personName(state.me.username)}</h2><div class="muted small" id="dayLabel"></div></div><span class="spacer"></span><div id="picker"></div></div>
     <div id="body"><div class="loading"><div class="spin"></div></div></div>
   </div>`);
   rangePicker(ctx.el.querySelector('#picker'), { single: true, onChange: (f) => { day = f; load(); } });
@@ -86,7 +86,7 @@ export default async function dashboardPage(ctx) {
           </tbody></table></div></div>
       </div>
       ${batches.length ? html`<div class="card"><div class="card-h"><h2>Son yüklemeler</h2><span class="spacer"></span>${can('personel') ? html`<a class="small" href="#/upload">Tümü →</a>` : ''}</div><div class="tw"><table class="t"><tbody>
-        ${batches.map((b) => html`<tr><td class="nowrap">${trDateTime(b.at)}</td><td>${b.by}</td><td class="small muted">${b.files.slice(0, 2).join(', ')}${b.files.length > 2 ? '…' : ''}</td><td class="num"><b>${n(b.counts.new)}</b> yeni</td><td class="num muted">${n(b.counts.dup)} mükerrer</td></tr>`)}
+        ${batches.map((b) => html`<tr><td class="nowrap">${trDateTime(b.at)}</td><td>${personName(b.by)}</td><td class="small muted">${b.files.slice(0, 2).join(', ')}${b.files.length > 2 ? '…' : ''}</td><td class="num"><b>${n(b.counts.new)}</b> yeni</td><td class="num muted">${n(b.counts.dup)} mükerrer</td></tr>`)}
       </tbody></table></div></div>` : ''}
     </div>`);
     // Bir güne tıklayınca o günün üretim listesi açılır

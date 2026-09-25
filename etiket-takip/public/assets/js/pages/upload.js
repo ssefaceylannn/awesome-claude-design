@@ -1,5 +1,5 @@
 // Etiket yükleme: PDF oku → önizle (mükerrer / devam / eşleşme / kampanya) → kaydet.
-import { html, mount, icon, toast, n, trDate, trDateTime, today, confirmDialog, busy, emptyState, storeTag, rangeLabel, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
+import { html, mount, personName, icon, toast, n, trDate, trDateTime, today, confirmDialog, busy, emptyState, storeTag, rangeLabel, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
 import { api, state, isAdmin, invalidateOrders, setRange } from '../core/api.js';
 import { readLabels } from '../core/labels.js';
 import { readSheets } from '../core/sheets.js';
@@ -213,7 +213,7 @@ export default async function uploadPage(ctx) {
       const { batches } = await api.get('batches?limit=100');
       const box = $('#history');
       mount(box, batches.length ? html`<div class="tw"><table class="t"><thead><tr>${admin ? selTh() : ''}<th>Zaman</th><th>Kullanıcı</th><th>Dosyalar</th><th>Sipariş tarihi</th><th class="num">Yeni</th><th class="num">Mükerrer</th><th class="num">Devam</th><th class="num">Adet</th><th></th></tr></thead><tbody>
-        ${batches.map((b) => html`<tr>${admin ? (b.orderCount ? selTd(b.id, hsel) : html`<td class="sel"></td>`) : ''}<td class="nowrap">${trDateTime(b.at)}</td><td>${b.by}</td>
+        ${batches.map((b) => html`<tr>${admin ? (b.orderCount ? selTd(b.id, hsel) : html`<td class="sel"></td>`) : ''}<td class="nowrap">${trDateTime(b.at)}</td><td>${personName(b.by)}</td>
           <td class="small">${b.files.slice(0, 3).map((f) => html`<div>${f}</div>`)}${b.files.length > 3 ? html`<div class="muted">+${b.files.length - 3} dosya</div>` : ''}</td>
           <td class="small nowrap">${b.dates.length ? rangeLabel(b.dates[0], b.dates[b.dates.length - 1]) : '—'}</td>
           <td class="num"><b>${n(b.counts.new)}</b></td><td class="num">${n(b.counts.dup)}</td><td class="num">${n(b.counts.merge)}</td><td class="num">${n(b.units)}</td>

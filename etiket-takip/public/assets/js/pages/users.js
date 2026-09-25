@@ -1,5 +1,5 @@
 // Kullanıcılar: Netlify ortam değişkeninden okunur (yalnızca yönetici).
-import { html, mount, icon, emptyState } from '../core/ui.js';
+import { html, mount, personName, initials, icon, emptyState } from '../core/ui.js';
 import { api, state } from '../core/api.js';
 
 const ROLES = [
@@ -25,7 +25,7 @@ export default async function usersPage(ctx) {
     <div class="grid">
       <div class="card"><div class="card-h"><h2>Tanımlı kullanıcılar</h2></div>
         <div class="tw"><table class="t"><thead><tr><th>Kullanıcı adı</th><th>Rol</th><th></th></tr></thead><tbody>
-          ${users.length ? users.map((u) => html`<tr><td><div class="row"><div class="avatar" style="width:28px;height:28px;font-size:.72rem">${u.username.slice(0, 2)}</div><b>${u.username}</b>${u.username === state.me.username ? html`<span class="badge info">siz</span>` : ''}</div></td>
+          ${users.length ? users.map((u) => html`<tr><td><div class="row"><div class="avatar" style="width:28px;height:28px;font-size:.72rem">${initials(u.username)}</div><b>${personName(u.username)}</b>${u.username === state.me.username ? html`<span class="badge info">siz</span>` : ''}</div></td>
             <td><span class="badge ${u.role === 'admin' ? 'violet' : u.role === 'personel' ? 'ok' : ''}">${(ROLES.find((r) => r.id === u.role) || {}).label || u.role}</span></td><td class="muted small">${(ROLES.find((r) => r.id === u.role) || {}).desc || ''}</td></tr>`) : html`<tr><td colspan="3">${emptyState('users', 'Kullanıcı yok', '')}</td></tr>`}
         </tbody></table></div></div>
     </div>

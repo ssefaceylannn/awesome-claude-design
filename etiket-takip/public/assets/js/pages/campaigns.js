@@ -1,6 +1,6 @@
 // Kampanyalar: kampanya türleri (hazır + sizin eklediğiniz), mağaza/platform kapsamı,
 // "sadece bu ürünler / bu ürünler hariç" seçimi, koşul, çoklu hediye, toplu işlemler.
-import { html, mount, icon, modal, confirmDialog, toast, uid, trDate, today, addDays, emptyState, multiSelect, PLATFORMS, pLabel, pBadge, collator, n, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
+import { html, mount, personName, icon, modal, confirmDialog, toast, uid, trDate, today, addDays, emptyState, multiSelect, PLATFORMS, pLabel, pBadge, collator, n, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
 import { state, isAdmin, saveSection } from '../core/api.js';
 import { normCampaign } from '../shared/calc.js';
 
@@ -322,7 +322,7 @@ export default async function campaignsPage(ctx) {
           const nc = normCampaign(c);
           return html`<tr>
           ${admin ? selTd(c.id, sel) : ''}
-          <td><b>${c.name}</b>${c.note ? html`<div class="muted xs">${c.note}</div>` : ''}${c.createdBy ? html`<div class="muted xs">${c.createdBy} · ${trDate((c.createdAt || '').slice(0, 10))}</div>` : ''}</td>
+          <td><b>${c.name}</b>${c.note ? html`<div class="muted xs">${c.note}</div>` : ''}${c.createdBy ? html`<div class="muted xs">${personName(c.createdBy)} · ${trDate((c.createdAt || '').slice(0, 10))}</div>` : ''}</td>
           <td class="small" style="max-width:360px">${describe(c)}</td>
           <td class="small"><div class="row wrap" style="gap:4px">${nc.platforms.length ? nc.platforms.map((p) => pBadge(p)) : html`<span class="badge">Tüm platformlar</span>`}</div>
             <div class="muted xs" style="margin-top:4px">${!nc.storeIds.length ? 'Tüm mağazalar' : (nc.storeMode === 'exclude' ? 'Hariç: ' : '') + state.config.stores.filter((x) => nc.storeIds.includes(x.id)).map((x) => x.name).join(', ')}</div></td>

@@ -1,5 +1,5 @@
 // Uygulama kabuğu: kenar menü, üst bar, yönlendirici.
-import { html, mount, icon, esc, toast, $ } from './core/ui.js';
+import { html, mount, icon, esc, toast, $, personName, initials } from './core/ui.js';
 import { api, boot, state, can } from './core/api.js';
 import { isArchiveOnly } from './shared/matcher.js';
 import { brandResolved } from './shared/calc.js';
@@ -41,7 +41,7 @@ function sidebar() {
       const items = g.items.filter((i) => !i.role || can(i.role));
       return items.length ? html`<div class="nav-group"><span>${g.group}</span>${items.map((i) => html`<a href="#/${i.id}" data-id="${i.id}">${icon(i.icon)}<span>${i.label}</span><span class="count hidden" data-count="${i.id}"></span></a>`)}</div>` : '';
     })}</nav>
-    <div class="me"><div class="avatar">${u.username.slice(0, 2)}</div><div><b>${u.username}</b><small>${ROLE_LABEL[u.role] || u.role}</small></div>
+    <div class="me"><div class="avatar">${initials(u.username)}</div><div><b>${personName(u.username)}</b><small>${ROLE_LABEL[u.role] || u.role}</small></div>
       <button id="themeBtn" title="Tema">${icon('moon')}</button>
       <button id="logoutBtn" title="Çıkış yap">${icon('logout')}</button></div>`);
   $('#logoutBtn').addEventListener('click', async () => {
@@ -85,7 +85,8 @@ async function route() {
   current = id;
   const top = $('#topbar');
   mount(top, html`<button class="btn ghost icon menu-btn" id="menuBtn" aria-label="Menü">${icon('menu')}</button>
-    <div class="title"><h1>${item.label}</h1><small id="pageSub"></small></div><div id="gsearch"></div><div class="actions" id="pageActions"></div>`);
+    <div class="title"><h1>${item.label}</h1><small id="pageSub"></small></div><div id="gsearch"></div><div class="actions" id="pageActions"></div>
+    <div class="corp-logo" title="Apidemia Pharma A.Ş."><img src="/assets/img/firma-logo.svg" alt="Apidemia Pharma A.Ş." width="132" height="34"></div>`);
   $('#menuBtn').addEventListener('click', () => $('#app').classList.add('nav-open'));
   mountProductSearch($('#gsearch'), (p) => navigate('product', { id: p.id }));
   // Her sayfa için yeni bir kap: önceki sayfanın olay dinleyicileri taşınmasın

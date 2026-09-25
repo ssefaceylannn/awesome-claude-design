@@ -1,5 +1,5 @@
 // Ayarlar, yedekleme ve işlem geçmişi.
-import { html, mount, icon, toast, busy, download, trDateTime, today, confirmDialog, emptyState, MONTHS, n, modal } from '../core/ui.js';
+import { html, mount, personName, icon, toast, busy, download, trDateTime, today, confirmDialog, emptyState, MONTHS, n, modal } from '../core/ui.js';
 import { api, state, isAdmin, saveSection, invalidateOrders, reloadConfig, fetchOrders } from '../core/api.js';
 import { isLegacyBackup, convertLegacy } from '../core/legacy.js';
 import { refreshBadges } from '../app.js';
@@ -200,7 +200,7 @@ export default async function settingsPage(ctx) {
     try {
       const { events } = await api.get('audit?month=' + $('#month').value);
       mount($('#audit'), events.length ? html`<div class="tw" style="max-height:520px"><table class="t"><thead><tr><th>Zaman</th><th>Kullanıcı</th><th>İşlem</th><th>Ayrıntı</th></tr></thead><tbody>
-        ${events.map((ev) => html`<tr><td class="nowrap small">${trDateTime(ev.at)}</td><td><b>${ev.user}</b></td><td><span class="badge ${/sil|temizlik/.test(ev.action) ? 'err' : ev.action === 'giriş' ? '' : ev.action.includes('ayar') ? 'violet' : 'ok'}">${ev.action}</span></td><td class="small">${ev.detail}</td></tr>`)}
+        ${events.map((ev) => html`<tr><td class="nowrap small">${trDateTime(ev.at)}</td><td><b>${personName(ev.user)}</b></td><td><span class="badge ${/sil|temizlik/.test(ev.action) ? 'err' : ev.action === 'giriş' ? '' : ev.action.includes('ayar') ? 'violet' : 'ok'}">${ev.action}</span></td><td class="small">${ev.detail}</td></tr>`)}
       </tbody></table></div>` : emptyState('history', 'Bu ay kayıt yok', ''));
     } catch (err) { mount($('#audit'), html`<div class="card-b unm">${err.message}</div>`); }
   }

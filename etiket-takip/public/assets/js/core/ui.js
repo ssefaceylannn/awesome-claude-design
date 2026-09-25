@@ -35,6 +35,9 @@ export const trDateTime = (iso) => { if (!iso) return ''; const d = new Date(iso
 export const rangeLabel = (f, t) => (f === t ? trDate(f, true) : `${trDate(f)} – ${trDate(t)}`);
 export const uid = (p = '') => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 export const collator = new Intl.Collator('tr-TR', { numeric: true });
+/** Kişi adlarını büyük harfle başlatır (yalnızca görünüm; giriş adı değişmez): "sami ceylan" → "Sami Ceylan" */
+export const personName = (s) => String(s ?? '').replace(/(^|[\s._-])(\p{Ll})/gu, (_, sep, ch) => sep + ch.toLocaleUpperCase('tr-TR'));
+export const initials = (s) => { const w = String(s ?? '').split(/[\s._-]+/).filter(Boolean); return (w.length > 1 ? w[0][0] + w[1][0] : (w[0] || '?').slice(0, 2)).toLocaleUpperCase('tr-TR'); };
 
 export const PLATFORMS = [
   { id: 'trendyol', label: 'Trendyol' },
