@@ -3,6 +3,14 @@
 // sipariş no, alıcı ve tutarlar bulunursa alınır. Tarayıcıda ve testlerde çalışır.
 import { fold } from './text.js';
 
+/**
+ * Satırlara böl. Panelden kopyalanan metindeki görünmez karakterler (sıfır genişlikli boşluk, BOM…)
+ * atılır, harfler tek biçime getirilir (ayrık "s + ̧" → "ş"); yoksa başlıklar tanınmayabilir.
+ */
+const splitLines = (text) => String(text || '').normalize('NFC').replace(/[\u200B-\u200F\u2060\uFEFF\u00AD]/g, '').split(/\r\n|\r|\n|\u2028|\u2029/).map((l) => l.replace(/\s+/g, ' ').trim());
+// "Sipariş Mesajı", "Sipariş Mesajı Var", "Müşteri Mesajı"… başlıkları (alıcı adı değildir)
+const MESSAGE_HEAD = /^(?:sipari[sş]|m[uü][sş]teri|al[ıi]c[ıi])?\s*mesaj/;
+
 /** "₺1.234,56" → 1234.56 */
 export function parseMoney(s) {
   const m = String(s || '').replace(/\s/g, '').match(/-?\d[\d.]*(?:,\d{1,2})?/);
@@ -54,7 +62,7 @@ export function detectStore(text, stores) {
  * @param {(line:string)=>string|null} matchLine  Satırı katalog ürününe eşler (ürün kimliği ya da null)
  */
 export function parseResendText(text, matchLine) {
-  const lines = String(text || '').split(/\r?\n/).map((l) => l.replace(/\s+/g, ' ').trim());
+  const lines = splitLines(text);
   const out = { orderNo: '', recipient: '', amounts: {}, items: [] };
 
   for (let i = 0; i < lines.length; i++) {
@@ -126,7 +134,7 @@ function parseBlock(ls) {
   for (let i = 1; i < ls.length; i++) {
     const l = lower(ls[i]);
     if (!l.endsWith(':')) continue;
-    if (/^sipari[sş] mesaj[ıi]/.test(l)) continue; // mesaj başlığının altındaki satır alıcı adı olabilir, etiketli değer sayılmaz
+    if (MESSAGE_HEAD.test(l)) continue; // mesaj başlığının altındaki satır alıcı adı olabilir, etiketli değer sayılmaz
     const j = valueIdx(i);
     if (j < 0) continue;
     labeled.add(j);
@@ -154,7 +162,7 @@ function parseBlock(ls) {
   const firstItem = imgLines.length ? imgLines[0] : ls.length;
   for (let i = afterTermin >= 0 ? afterTermin + 1 : 1; i < firstItem; i++) {
     const l = ls[i];
-    if (!l || labeled.has(i) || l.endsWith(':') || /^\d/.test(l) || /trendyol|plus|kargo|iade/i.test(l) || /^sipari[sş] mesaj[ıi]/.test(lower(l)) || !/\p{L}{2,}/u.test(l)) continue;
+    if (!l || labeled.has(i) || l.endsWith(':') || /^\d/.test(l) || /trendyol|plus|kargo|iade/i.test(l) || MESSAGE_HEAD.test(lower(l)) || !/\p{L}{2,}/u.test(l)) continue;
     o.recipient = l.slice(0, 120);
     break;
   }
@@ -166,7 +174,7 @@ function parseBlock(ls) {
 
 /** Metin Trendyol listesi biçimindeyse siparişleri döndürür, değilse boş dizi */
 export function parseOrderList(text) {
-  const ls = String(text || '').split(/\r?\n/).map((l) => l.replace(/\s+/g, ' ').trim());
+  const ls = splitLines(text);
   const starts = [];
   ls.forEach((l, i) => { if (/^#\d{6,}$/.test(l)) starts.push(i); });
   return starts.map((s, n) => parseBlock(ls.slice(s, n + 1 < starts.length ? starts[n + 1] : ls.length)));

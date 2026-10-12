@@ -392,15 +392,21 @@ await test('USERS değişkeni ayrıştırma', () => {
 await test('Yeniden gönderim: "Sipariş Mesajı" başlığı alıcı adı sayılmaz', async () => {
   const { parseOrderList } = await import('../public/assets/js/shared/resend.js');
   const block = (no, before, name, after, product) => `#${no}\n\nSipariş Tarihi:\n\n10.10.2026 08:32\n\nPaket No:\n\n4232056487\n\nTeslimat No:\n\n10925934261\n\nTermin Süresi:\n\n1 gün 21 saat 28 dakika\n\t\n\n${before}${name}\n${after}\t\n\n1\n${product}, one size-image\n${product}, one size\n\nStok Kodu:\n\nmerchantSku\n\nBarkod:\n\n8682742502916\n\n₺699,00\n\t\n\n7340037888556903\n\nSatıcı anlaşmalı kargo\n\t\n\nSatış Tutarı:\n\n₺699,00\n`;
-  const text = block('11674717664', 'Sipariş Mesajı\n\n', 'Humeyra Vural Bayram', "\nTrendyol Plus'lı\n", 'Lavanta Oda Kokusu LK')
-    + block('11679682710', '', 'Selen Bolat', '', 'Lavanta Oda Kokusu LK')
-    + block('11668013887', '', 'özlem Gül', "\nTrendyol Plus'lı\n", 'Lavanta Oda Kokusu LK')
+  const text = block('11674717664', 'Sipariş Mesajı\n\n', 'Deniz Örnek Yılmaz', "\nTrendyol Plus'lı\n", 'Lavanta Oda Kokusu LK')
+    + block('11679682710', '', 'Selin Deneme', '', 'Lavanta Oda Kokusu LK')
+    + block('11668013887', '', 'özge Test', "\nTrendyol Plus'lı\n", 'Lavanta Oda Kokusu LK')
     + block('11600000009', 'SİPARİŞ MESAJI\n\n', 'Ali Veli', '', 'Lavanta Oda Kokusu LK')
     + block('11600000010', 'Sipariş Mesajı:\n\n', 'Ayşe Kaya', '', 'Lavanta Oda Kokusu LK');
   const list = parseOrderList(text);
-  assert.deepEqual(list.map((o) => o.recipient), ['Humeyra Vural Bayram', 'Selen Bolat', 'özlem Gül', 'Ali Veli', 'Ayşe Kaya']);
+  assert.deepEqual(list.map((o) => o.recipient), ['Deniz Örnek Yılmaz', 'Selin Deneme', 'özge Test', 'Ali Veli', 'Ayşe Kaya']);
   assert.equal(list[0].items.length, 1);
   assert.equal(list[0].code, '7340037888556903');
+  // Panelden kopyalamada görünmez karakterler, ayrık harfler ve farklı başlık yazımları
+  const tricky = block('11600000011', 'Sipariş\u200b Mesajı\n\n', 'Can Örnek', '', 'Lavanta Oda Kokusu LK')
+    + block('11600000012', 'Sipari\u0073\u0327 Mesaj\u0131\r\n\r\n', 'Ece Örnek', '', 'Lavanta Oda Kokusu LK') // "ş" ayrık yazılmış (NFD)
+    + block('11600000013', 'Sipariş Mesajı Var\n\n', 'Efe Örnek', '', 'Lavanta Oda Kokusu LK')
+    + block('11600000014', '\ufeffSipariş Mesajı\n\n', 'Ada Örnek', '', 'Lavanta Oda Kokusu LK');
+  assert.deepEqual(parseOrderList(tricky).map((o) => o.recipient), ['Can Örnek', 'Ece Örnek', 'Efe Örnek', 'Ada Örnek']);
 });
 
 console.log(`\n${passed} test geçti`);
