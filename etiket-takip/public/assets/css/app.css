@@ -703,22 +703,46 @@ a { color: var(--brand); }
   #print .plabel:last-child { break-after: auto; page-break-after: auto; }
 }
 
-/* kombinasyon listesi çıktısı (A4, sütunlar sayfa genişliğine sığar) */
+/* kombinasyon listesi çıktısı — önizleme ve kâğıt aynı kurallarla (A4, sütunlar sayfa genişliğine sığar).
+   --fs: yazı boyutu, --pad: hücre iç boşluğu (Sayfa düzeni penceresinden) */
+.cprint { --fs: 13pt; --pad: 6px; font: var(--fs)/1.3 Arial, Helvetica, sans-serif; color: #000; }
+.cprint h1, .cprint h2 { font-family: Arial, Helvetica, sans-serif; letter-spacing: 0; color: #000; }
+.cprint h1 { font-size: calc(var(--fs) * 1.35); margin: 0 0 2px; font-weight: 700; }
+.cprint .sub { font-size: calc(var(--fs) * .72); color: #444; margin: 0 0 calc(var(--fs) * .6); }
+.cprint section { margin-top: calc(var(--fs) * .9); }
+.cprint section:first-of-type { margin-top: 0; }
+.cprint section.newpage { break-before: page; page-break-before: always; }
+.cprint h2 { font-size: calc(var(--fs) * 1.1); margin: 0 0 calc(var(--fs) * .3); font-weight: 700; break-after: avoid; page-break-after: avoid; }
+.cprint h2 small { font-weight: 400; color: #444; font-size: .8em; }
+.cprint table { width: calc(100% - 2px); margin-right: 2px; table-layout: fixed; border-collapse: collapse; } /* dış çizgi sayfa kenarında kesilmesin */
+.cprint th, .cprint td { border: 1px solid #888; padding: var(--pad) calc(var(--pad) + 3px); vertical-align: middle; overflow-wrap: anywhere; color: #000; }
+.cprint th { background: #eee; text-align: center; font-weight: 700; }
+.cprint td.p { text-align: left; }
+/* Sayı sütunları yazı boyutuyla orantılı genişlikte; ürün sütunu kalan genişliği alır */
+.cprint th.num, .cprint td.num { width: calc(var(--fs) * 7); text-align: center; }
+.cprint td.num { white-space: nowrap; font-weight: 700; }
+.cprint.nop th.num, .cprint.nop td.num { width: auto; }
+.cprint tr { break-inside: avoid; page-break-inside: avoid; }
+.cprint thead { display: table-header-group; } /* tablo sonraki sayfaya taşarsa başlık tekrar eder */
+.cprint tr.karma td { font-weight: 700; background: #f2f2f2; }
+.cprint tr.karma { break-before: avoid; page-break-before: avoid; } /* karma satırı tek başına yeni sayfaya geçmesin */
 @media print {
-  #print .cprint { font: 10.5pt/1.3 Arial, Helvetica, sans-serif; color: #000; }
   html, body { background: #fff !important; } /* sitenin krem zemini kâğıda basılmasın */
-  #print .cprint h1, #print .cprint h2 { font-family: Arial, Helvetica, sans-serif; letter-spacing: 0; }
-  #print .cprint h1 { font-size: 15pt; margin: 0 0 2px; }
-  #print .cprint > p { font-size: 9pt; color: #444; margin: 0 0 8px; }
-  #print .cprint section { margin-top: 10px; break-inside: auto; }
-  #print .cprint h2 { font-size: 12pt; margin: 0 0 4px; break-after: avoid; }
-  #print .cprint h2 small { font-weight: 400; color: #444; font-size: 9.5pt; }
-  #print .cprint table { width: 100%; table-layout: fixed; border-collapse: collapse; }
-  #print .cprint th, #print .cprint td { border: 1px solid #999; padding: 4px 6px; overflow-wrap: anywhere; vertical-align: middle; }
-  #print .cprint th { background: #eee; text-align: center; }
-  #print .cprint th.num, #print .cprint td.num { width: 30mm; text-align: center; }
-  #print .cprint td.num { white-space: nowrap; }
-  #print .cprint.nop th.num, #print .cprint.nop td.num { width: auto; }
-  #print .cprint tr { break-inside: avoid; }
-  #print .cprint tr.karma td { font-weight: 700; background: #f3f3f3; }
+  #print .cprint { display: block; font: var(--fs)/1.3 Arial, Helvetica, sans-serif; }
+  /* Üretim listesi çıktısının genel #print kuralları bu listeyi ezmesin */
+  #print .cprint h1 { font-size: calc(var(--fs) * 1.35); margin: 0 0 2px; }
+  #print .cprint .sub { font-size: calc(var(--fs) * .72); margin: 0 0 calc(var(--fs) * .6); color: #444; }
+  #print .cprint table { width: calc(100% - 2px); margin-right: 2px; table-layout: fixed; border-collapse: collapse; }
+  #print .cprint th, #print .cprint td { border: 1px solid #888; padding: var(--pad) calc(var(--pad) + 3px); }
+  #print .cprint th { text-align: center; background: #eee; }
+  #print .cprint td.p { text-align: left; }
+  #print .cprint td.num, #print .cprint th.num { text-align: center; }
 }
+/* Sayfa düzeni penceresi: ayarlar + ölçekli A4 önizleme */
+.print-setup { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 760px) { .print-setup { grid-template-columns: 1fr; } }
+.print-setup input[type=range] { width: 100%; accent-color: var(--honey-2); }
+.sheet-wrap { background: var(--surface-3); border-radius: 12px; padding: 14px; overflow: auto; max-height: 62vh; }
+.sheet { background: #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, .18); box-sizing: border-box; overflow: hidden; zoom: .5; }
+.sheet.portrait { width: 210mm; height: 297mm; }
+.sheet.landscape { width: 297mm; height: 210mm; }

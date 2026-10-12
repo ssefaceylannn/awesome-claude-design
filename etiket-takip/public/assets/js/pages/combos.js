@@ -30,7 +30,7 @@ export default async function combosPage(ctx) {
   let loadSeq = 0;
   let computedAll = []; // son hesaplanan siparişler (yazdırma mağaza mağaza buradan yapılır)
 
-  mount(ctx.actions, html`<button class="btn" id="cprint">${icon('printer')}Yazdır</button><button class="btn icon" id="cprintSet" title="Yazdırma ayarları">${icon('settings')}</button><button class="btn primary" id="xls">${icon('sheet')}Excel indir</button>`);
+  mount(ctx.actions, html`<button class="btn" id="cprint">${icon('printer')}Yazdır</button><button class="btn" id="cprintSet" title="Yazdırma sayfa düzeni">${icon('settings')}Sayfa düzeni</button><button class="btn primary" id="xls">${icon('sheet')}Excel indir</button>`);
   mount(ctx.el, html`<div class="stack">
     <div class="tabs card" style="padding:0 8px"><button data-tab="auto">${icon('box')} Yüklenen siparişlerden</button><button data-tab="paste">${icon('copy')} Metin yapıştır</button></div>
     <div id="autoBox">
@@ -241,28 +241,98 @@ export default async function combosPage(ctx) {
   });
 
   // ---------------------------------------------------------------- yazdırma (A4, mağaza mağaza)
+  // Sayfa düzeni ayarları hatırlanır; önizleme ve çıktı aynı HTML/CSS ile üretilir.
   const PCOLS = [['products', 'Ürünler'], ['orders', 'Sipariş adedi'], ['units', 'Ürün adedi']];
+  const PADS = { s: ['Sıkı', 3], m: ['Normal', 6], l: ['Geniş', 10] };
   const printPref = () => {
-    const p = loadPref().print || {};
-    return { cols: Array.isArray(p.cols) && p.cols.length ? p.cols : ['products', 'orders', 'units'], orient: p.orient === 'landscape' ? 'landscape' : 'portrait', saved: !!loadPref().print };
+    const raw = loadPref().print;
+    const p = raw || {};
+    return {
+      cols: Array.isArray(p.cols) && p.cols.length ? PCOLS.map(([k]) => k).filter((k) => p.cols.includes(k)) : ['products', 'orders', 'units'],
+      orient: p.orient === 'landscape' ? 'landscape' : 'portrait',
+      fs: Math.min(20, Math.max(9, +p.fs || 13)),
+      pad: PADS[p.pad] ? p.pad : 'm',
+      margin: Math.min(25, Math.max(5, +p.margin || 12)),
+      newPage: !!p.newPage,
+      title: p.title !== false,
+      saved: !!raw,
+    };
   };
+  /** Mağaza mağaza bölümler (seçili mağazalar ya da verideki tüm mağazalar) */
+  function printSections() {
+    const byStore = new Map();
+    for (const c of computedAll) {
+      const key = c.store ? c.store.id : '?' + (c.order.sender || '');
+      if (!byStore.has(key)) byStore.set(key, { name: c.store ? c.store.name : (c.order.sender || 'Tanımsız mağaza'), list: [] });
+      byStore.get(key).list.push(c);
+    }
+    const order = new Map(state.config.stores.map((st, i) => [st.id, i]));
+    return [...byStore.entries()].sort((a, b) => (order.get(a[0]) ?? 1e6) - (order.get(b[0]) ?? 1e6) || a[1].name.localeCompare(b[1].name, 'tr'))
+      .map(([, v]) => ({ name: v.name, R: analyzeCombos(v.list, state.ctx, { min, includeRewards }) })).filter((x) => x.R.orders);
+  }
+  /** Çıktı içeriği: yalnızca seçilen sütunlar (kaldırılan sütunun başlığı da hücreleri de yok) */
+  function printHtml(p) {
+    const has = (k) => p.cols.includes(k);
+    const nums = p.cols.filter((k) => k !== 'products').length;
+    const row = (label, orders, units, karma) => html`<tr class="${karma ? 'karma' : ''}">${has('products') ? html`<td class="p">${label}</td>` : ''}${has('orders') ? html`<td class="num">${n(orders)}</td>` : ''}${has('units') ? html`<td class="num">${n(units)}</td>` : ''}</tr>`;
+    const head = html`<tr>${has('products') ? html`<th class="p">Ürünler</th>` : ''}${has('orders') ? html`<th class="num">Sipariş adedi</th>` : ''}${has('units') ? html`<th class="num">Ürün adedi</th>` : ''}</tr>`;
+    const scope = [rangeLabel(from, to), batchIds.length || tFrom || tTo ? 'seçili yüklemeler' + (tFrom || tTo ? ` ${tFrom || '…'}–${tTo || '…'}` : '') : ''].filter(Boolean).join(' · ');
+    const style = `--fs:${p.fs}pt;--pad:${PADS[p.pad][1]}px`;
+    return html`<div class="cprint ${has('products') ? '' : 'nop'} cols-${nums}" style="${style}">
+      ${p.title ? html`<h1>Kombinasyon Listesi</h1><p class="sub">${scope} · ${min} siparişten az olan bileşimler “${KARMA}” satırında</p>` : ''}
+      ${printSections().map((sc, i) => html`<section class="${p.newPage && i ? 'newpage' : ''}"><h2>${sc.name} <small>${n(sc.R.orders)} sipariş</small></h2><table><thead>${head}</thead><tbody>
+        ${sc.R.groups.map((g) => row(g.label, g.orders, g.units * g.orders))}
+        ${sc.R.karma.orders ? row(KARMA, sc.R.karma.orders, sc.R.karma.units, true) : ''}
+      </tbody></table></section>`)}
+    </div>`;
+  }
   async function printSettings() {
-    const p = printPref();
+    if (!computedAll.length) { toast('Önizleme için sipariş yok; tarih ya da mağaza seçimini değiştirin', 'err'); return false; }
+    let p = printPref();
     let ok = false;
+    const read = (d) => ({
+      cols: [...d.querySelectorAll('[name=col]:checked')].map((x) => x.value),
+      orient: d.querySelector('[name=orient]').value,
+      fs: +d.querySelector('[name=fs]').value,
+      pad: d.querySelector('[name=pad]').value,
+      margin: +d.querySelector('[name=margin]').value,
+      newPage: d.querySelector('[name=newPage]').checked,
+      title: d.querySelector('[name=title]').checked,
+    });
     await modal({
-      title: 'Yazdırma ayarları',
-      size: 'sm',
-      body: html`<div class="stack">
-        <div class="f">Yazdırılacak sütunlar<div class="stack" style="gap:8px;margin-top:6px">${PCOLS.map(([k, l]) => html`<label class="check"><input type="checkbox" name="col" value="${k}" ${p.cols.includes(k) ? 'checked' : ''}> ${l}</label>`)}</div></div>
-        <label class="f">Sayfa yönü<select class="input" name="orient"><option value="portrait" ${p.orient === 'portrait' ? 'selected' : ''}>Dikey (A4)</option><option value="landscape" ${p.orient === 'landscape' ? 'selected' : ''}>Yatay (A4)</option></select></label>
-        <p class="muted small">Mağaza seçimi sayfanın üstündeki “mağazalar” kutusundan alınır; seçim yoksa her mağaza ayrı başlıkla yazdırılır. Ayarlar hatırlanır.</p>
+      title: 'Sayfa düzeni',
+      size: 'lg',
+      body: html`<div class="print-setup">
+        <div class="stack" style="gap:14px">
+          <div class="f">Sütunlar<div class="row wrap" style="gap:14px;margin-top:6px">${PCOLS.map(([k, l]) => html`<label class="check"><input type="checkbox" name="col" value="${k}" ${p.cols.includes(k) ? 'checked' : ''}> ${l}</label>`)}</div></div>
+          <label class="f">Sayfa yönü<select class="input" name="orient"><option value="portrait" ${p.orient === 'portrait' ? 'selected' : ''}>Dikey (A4)</option><option value="landscape" ${p.orient === 'landscape' ? 'selected' : ''}>Yatay (A4)</option></select></label>
+          <label class="f">Yazı boyutu <span class="hint" id="fsV">${p.fs} punto</span><input type="range" name="fs" min="9" max="20" step="1" value="${p.fs}"></label>
+          <label class="f">Satır aralığı<select class="input" name="pad">${Object.entries(PADS).map(([k, [l]]) => html`<option value="${k}" ${p.pad === k ? 'selected' : ''}>${l}</option>`)}</select></label>
+          <label class="f">Kenar boşluğu <span class="hint" id="mgV">${p.margin} mm</span><input type="range" name="margin" min="5" max="25" step="1" value="${p.margin}"></label>
+          <label class="check"><input type="checkbox" name="title" ${p.title ? 'checked' : ''}> Başlık ve tarih satırı</label>
+          <label class="check"><input type="checkbox" name="newPage" ${p.newPage ? 'checked' : ''}> Her mağaza yeni sayfada başlasın</label>
+          <p class="muted small">Sütunlar her zaman sayfa genişliğine sığar; uzun ürün adları alt satıra geçer, satırlar gerekirse sonraki sayfaya devam eder. Mağaza seçimi sayfanın üstündeki kutudan alınır. Ayarlar hatırlanır.</p>
+        </div>
+        <div><div class="muted small" style="margin-bottom:6px">Önizleme · 1. sayfa</div><div class="sheet-wrap" id="pv"></div></div>
       </div>`,
-      actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Kaydet ve yazdır', value: 'ok', variant: 'primary', icon: 'printer' }],
-      onSubmit: (_, d) => {
-        const cols = [...d.querySelectorAll('[name=col]:checked')].map((x) => x.value);
-        if (!cols.length) throw new Error('En az bir sütun seçin');
-        savePref({ print: { cols, orient: d.querySelector('[name=orient]').value } });
-        ok = true;
+      actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Kaydet', value: 'save' }, { label: 'Kaydet ve yazdır', value: 'ok', variant: 'primary', icon: 'printer' }],
+      onOpen: (d) => {
+        const draw = () => {
+          const q = read(d);
+          d.querySelector('#fsV').textContent = `${q.fs} punto`;
+          d.querySelector('#mgV').textContent = `${q.margin} mm`;
+          const show = { ...q, cols: q.cols.length ? q.cols : ['products'] };
+          mount(d.querySelector('#pv'), html`<div class="sheet ${q.orient}" style="padding:${q.margin}mm">${printHtml(show)}</div>`);
+        };
+        d.addEventListener('input', draw);
+        d.addEventListener('change', draw);
+        draw();
+      },
+      onSubmit: (v, d) => {
+        const q = read(d);
+        if (!q.cols.length) throw new Error('En az bir sütun seçin');
+        savePref({ print: q });
+        ok = v === 'ok';
       },
     });
     return ok;
@@ -271,27 +341,10 @@ export default async function combosPage(ctx) {
     if (tab !== 'auto') { tab = 'auto'; savePref({ tab }); showTab(); }
     if (!computedAll.length) return toast('Yazdırılacak sipariş yok', 'err');
     const p = printPref();
-    const has = (k) => p.cols.includes(k);
-    // Mağaza mağaza ayrı analiz (seçili mağazalar ya da verideki tüm mağazalar)
-    const byStore = new Map();
-    for (const c of computedAll) {
-      const key = c.store ? c.store.id : '?' + (c.order.sender || '');
-      if (!byStore.has(key)) byStore.set(key, { name: c.store ? c.store.name : (c.order.sender || 'Tanımsız mağaza'), list: [] });
-      byStore.get(key).list.push(c);
-    }
-    const order = new Map(state.config.stores.map((st, i) => [st.id, i]));
-    const sections = [...byStore.entries()].sort((a, b) => (order.get(a[0]) ?? 1e6) - (order.get(b[0]) ?? 1e6) || a[1].name.localeCompare(b[1].name, 'tr'))
-      .map(([, v]) => ({ name: v.name, R: analyzeCombos(v.list, state.ctx, { min, includeRewards }) })).filter((x) => x.R.orders);
-    const cells = (label, orders, units, karma) => html`<tr class="${karma ? 'karma' : ''}">${has('products') ? html`<td class="p">${label}</td>` : ''}${has('orders') ? html`<td class="num">${n(orders)}</td>` : ''}${has('units') ? html`<td class="num">${n(units)}</td>` : ''}</tr>`;
-    const head = html`<tr>${has('products') ? html`<th class="p">Ürünler</th>` : ''}${has('orders') ? html`<th class="num">Sipariş adedi</th>` : ''}${has('units') ? html`<th class="num">Ürün adedi</th>` : ''}</tr>`;
-    const scope = [rangeLabel(from, to), batchIds.length || tFrom || tTo ? 'seçili yüklemeler' + (tFrom || tTo ? ` ${tFrom || '…'}–${tTo || '…'}` : '') : ''].filter(Boolean).join(' · ');
-    mount(document.getElementById('print'), html`<style>@page { size: A4 ${p.orient}; margin: 10mm }</style><div class="cprint ${has('products') ? '' : 'nop'}">
-      <h1>Kombinasyon Listesi</h1><p>${scope} · ${min} siparişten az olan bileşimler “${KARMA}” satırında</p>
-      ${sections.map((sc) => html`<section><h2>${sc.name} <small>${n(sc.R.orders)} sipariş</small></h2><table><thead>${head}</thead><tbody>
-        ${sc.R.groups.map((g) => cells(g.label, g.orders, g.units * g.orders))}
-        ${sc.R.karma.orders ? cells(KARMA, sc.R.karma.orders, sc.R.karma.units, true) : ''}
-      </tbody></table></section>`)}
-    </div>`);
+    const box = document.getElementById('print');
+    mount(box, html`<style>@page { size: A4 ${p.orient}; margin: ${p.margin}mm }</style>${printHtml(p)}`);
+    // Çıktı sayfada kalmasın: sonra tarayıcıdan (Ctrl+P) basılırsa eski ayarlı liste çıkmasın
+    window.addEventListener('afterprint', () => { box.innerHTML = ''; }, { once: true });
     window.print();
   }
   ctx.actions.querySelector('#cprint').addEventListener('click', async () => { if (!printPref().saved && !(await printSettings())) return; doPrint(); });
