@@ -1,0 +1,17 @@
+{
+  "name": "etiket-takip",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Kargo etiketi okuma, ürün eşleştirme, kampanya ve üretim listesi — Netlify",
+  "scripts": {
+    "dev": "node scripts/dev-server.mjs",
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^11.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

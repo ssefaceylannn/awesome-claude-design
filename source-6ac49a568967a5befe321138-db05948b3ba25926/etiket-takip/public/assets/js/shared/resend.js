@@ -1,0 +1,184 @@
+// Yeniden gönderim: pazaryeri sipariş detayından kopyalanan metni okur.
+// Ürün satırları katalogla eşleştirilir (eşleştirme fonksiyonu dışarıdan verilir);
+// sipariş no, alıcı ve tutarlar bulunursa alınır. Tarayıcıda ve testlerde çalışır.
+import { fold } from './text.js';
+
+/** "₺1.234,56" → 1234.56 */
+export function parseMoney(s) {
+  const m = String(s || '').replace(/\s/g, '').match(/-?\d[\d.]*(?:,\d{1,2})?/);
+  if (!m) return null;
+  const v = parseFloat(m[0].replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.'));
+  return Number.isFinite(v) ? v : null;
+}
+
+const AMOUNTS = [
+  ['sale', /^sat[ıi][sş] tutar[ıi]/i],
+  ['discount', /^sat[ıi]c[ıi] indirim tutar[ıi]/i],
+  ['billed', /^faturalanacak tutar/i],
+];
+// Ürün adı olamayacak satırlar (başlıklar, tutarlar, kodlar)
+const NOT_PRODUCT = /^(sat[ıi][sş]|sat[ıi]c[ıi]|faturalanacak|toplam|kargo|indirim|komisyon|birim fiyat|fiyat|tutar|barkod|stok kodu|sku|sipari[sş]|paket|al[ıi]c[ıi]|m[uü][sş]teri|adres|telefon|tarih|durum|fatura)\b/i;
+
+const QTY_INLINE = [
+  /(?:adet|miktar)\s*[:：]?\s*(\d{1,4})\b/i, // "Adet: 2"
+  /\b(\d{1,4})\s*adet\b/i, // "2 Adet"
+  /^\s*(\d{1,3})\s*[x×]\s+\S/i, // "2x Detox Shot" (etiket biçimi)
+];
+const qtyIn = (line) => { for (const re of QTY_INLINE) { const m = line.match(re); if (m) return +m[1]; } return null; };
+// Başlıklar Türkçe küçük harfe çevrilmiş satırda aranır ("İndirim" → "indirim"); değer özgün satırdan alınır
+const lower = (l) => l.toLocaleLowerCase('tr-TR');
+const labelThenValue = (lines, i, re) => {
+  const m = lower(lines[i]).match(new RegExp(re.source + '\\s*[:：]?\\s*(.*)$', 'i'));
+  if (!m) return null;
+  const v = lines[i].slice(m.index + m[0].length - m[m.length - 1].length).trim();
+  if (v) return v;
+  for (let j = i + 1; j < Math.min(lines.length, i + 3); j++) if (lines[j].trim()) return lines[j].trim();
+  return null;
+};
+
+/** Metinde adı veya gönderici adı geçen mağaza (en uzun eşleşme) */
+export function detectStore(text, stores) {
+  const hay = fold(text);
+  let best = null, len = 0;
+  for (const st of stores || []) {
+    for (const n of [st.name, ...(st.senders || [])]) {
+      const k = fold(n);
+      if (k.length > 3 && k.length > len && hay.includes(k)) { best = st; len = k.length; }
+    }
+  }
+  return best;
+}
+
+/**
+ * @param {string} text  Yapıştırılan metin
+ * @param {(line:string)=>string|null} matchLine  Satırı katalog ürününe eşler (ürün kimliği ya da null)
+ */
+export function parseResendText(text, matchLine) {
+  const lines = String(text || '').split(/\r?\n/).map((l) => l.replace(/\s+/g, ' ').trim());
+  const out = { orderNo: '', recipient: '', amounts: {}, items: [] };
+
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (!l) continue;
+    for (const [key, re] of AMOUNTS) {
+      if (out.amounts[key] == null && re.test(lower(l))) { const v = parseMoney(labelThenValue(lines, i, re)); if (v != null) out.amounts[key] = v; }
+    }
+    if (!out.orderNo) {
+      const v = labelThenValue(lines, i, /^(?:sipari[sş]|paket)\s*(?:no|numaras[ıi]|numara)\.?/i);
+      const m = v && v.match(/[A-Za-z0-9-]{4,}/);
+      if (m) out.orderNo = m[0];
+    }
+    if (!out.recipient) {
+      const v = labelThenValue(lines, i, /^(?:al[ıi]c[ıi]|m[uü][sş]teri)(?:\s*(?:ad[ıi]?\s*soyad[ıi]?|ad[ıi]|bilgisi))?/i);
+      if (v && /\p{L}{2,}/u.test(v) && !/\d{5,}/.test(v)) out.recipient = v.slice(0, 120);
+    }
+  }
+  if (!out.orderNo) {
+    // Etiketsiz uzun numara (barkod/stok kodu satırları hariç)
+    const l = lines.find((x) => /\b\d{8,}\b/.test(x) && !/barkod|stok|sku|tel|gsm|₺|tl\b/i.test(x));
+    if (l) out.orderNo = l.match(/\b\d{8,}\b/)[0];
+  }
+
+  // Ürün satırları: katalogla eşleşen her satır bir ürün; adet aynı satırda ya da
+  // sonraki satırlarda ("Adet" başlığının altındaki sayı dâhil) aranır.
+  const found = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (l.length < 3 || NOT_PRODUCT.test(lower(l)) || /^[\d\s.,₺tl%-]+$/i.test(l)) continue;
+    const productId = matchLine(l);
+    if (productId) found.push({ i, raw: l, productId, qty: qtyIn(l) });
+  }
+  found.forEach((f, n) => {
+    if (f.qty != null) return;
+    const end = n + 1 < found.length ? found[n + 1].i : Math.min(lines.length, f.i + 8);
+    for (let j = f.i + 1; j < end; j++) {
+      const q = qtyIn(lines[j]);
+      if (q != null) { f.qty = q; break; }
+      if (/^(adet|miktar)\s*[:：]?$/i.test(lower(lines[j]))) {
+        const next = lines.slice(j + 1, end).find(Boolean);
+        if (next && /^\d{1,4}$/.test(next)) { f.qty = +next; break; }
+      }
+    }
+  });
+  // Aynı ürün birden çok satırda geçerse (ör. başlık + fatura satırı) bir kez alınır; açık adetler toplanır
+  const byId = new Map();
+  for (const f of found) {
+    const cur = byId.get(f.productId);
+    if (!cur) byId.set(f.productId, { productId: f.productId, raw: f.raw, qty: f.qty });
+    else if (f.qty != null) cur.qty = (cur.qty || 0) + f.qty;
+  }
+  out.items = [...byId.values()].map((x) => ({ ...x, qty: Math.max(1, Math.min(9999, x.qty || 1)), qtyFound: x.qty != null }));
+  return out;
+}
+
+// ------------------------------------------------------------------ Trendyol sipariş listesi
+// Satıcı panelindeki "Siparişler" listesinden kopyalanan metin: her sipariş "#11…" satırıyla başlar.
+// Her bloktan alıcı, sipariş no, 734… ile başlayan kargo kodu, ürünler ve adetler okunur.
+
+/** Etiket ürün adı: "…, one size-image" / "…, one size" varyant ekleri atılır */
+export const cleanProductName = (s) => String(s || '').replace(/-image$/i, '').replace(/,\s*(one size|tek ebat|standart)\s*$/i, '').trim();
+
+function parseBlock(ls) {
+  const o = { orderNo: ls[0].replace(/^#/, ''), recipient: '', orderDate: '', packageNo: '', deliveryNo: '', code: '', amounts: {}, items: [] };
+  const labeled = new Set(); // bir başlığın değeri olan satırlar (barkod, paket no…) kargo kodu sayılmaz
+  const valueIdx = (i) => { for (let j = i + 1; j < Math.min(ls.length, i + 4); j++) if (ls[j]) return j; return -1; };
+  let afterTermin = -1;
+  for (let i = 1; i < ls.length; i++) {
+    const l = lower(ls[i]);
+    if (!l.endsWith(':')) continue;
+    if (/^sipari[sş] mesaj[ıi]/.test(l)) continue; // mesaj başlığının altındaki satır alıcı adı olabilir, etiketli değer sayılmaz
+    const j = valueIdx(i);
+    if (j < 0) continue;
+    labeled.add(j);
+    const v = ls[j];
+    if (/^sipari[sş] tarihi/.test(l)) o.orderDate = v;
+    else if (/^paket no/.test(l)) o.packageNo = v;
+    else if (/^teslimat no/.test(l)) o.deliveryNo = v;
+    else if (/^termin/.test(l)) afterTermin = j;
+    for (const [key, re] of AMOUNTS) if (o.amounts[key] == null && re.test(l)) { const m = parseMoney(v); if (m != null) o.amounts[key] = m; }
+  }
+  // Ürünler: "-image" ile biten satır ürün görselinin alt yazısıdır; hemen üstündeki sayı adettir
+  const imgLines = ls.map((l, i) => (/-image$/i.test(l) ? i : -1)).filter((i) => i >= 0);
+  const qtyAbove = (i) => { for (let j = i - 1; j >= Math.max(1, i - 3); j--) if (/^\d{1,4}$/.test(ls[j])) return +ls[j]; return null; };
+  if (imgLines.length) {
+    for (const i of imgLines) o.items.push({ name: cleanProductName(ls[i]), qty: qtyAbove(i) || 1, qtyFound: qtyAbove(i) != null });
+  } else {
+    // Görsel satırı yoksa: tek başına sayı + ardından gelen metin satırı
+    for (let i = 1; i < ls.length - 1; i++) {
+      if (!/^\d{1,4}$/.test(ls[i]) || labeled.has(i)) continue;
+      const j = valueIdx(i);
+      if (j > 0 && /\p{L}{3,}/u.test(ls[j]) && !ls[j].endsWith(':')) o.items.push({ name: cleanProductName(ls[j]), qty: +ls[i], qtyFound: true });
+    }
+  }
+  // Alıcı: termin süresinden sonraki ilk ad satırı ("Trendyol Plus'lı" gibi rozetler ve "Sipariş Mesajı" başlığı hariç)
+  const firstItem = imgLines.length ? imgLines[0] : ls.length;
+  for (let i = afterTermin >= 0 ? afterTermin + 1 : 1; i < firstItem; i++) {
+    const l = ls[i];
+    if (!l || labeled.has(i) || l.endsWith(':') || /^\d/.test(l) || /trendyol|plus|kargo|iade/i.test(l) || /^sipari[sş] mesaj[ıi]/.test(lower(l)) || !/\p{L}{2,}/u.test(l)) continue;
+    o.recipient = l.slice(0, 120);
+    break;
+  }
+  // Kargo kodu: 734… ile başlayan uzun numara; yoksa başlıksız ilk uzun numara
+  const codes = ls.map((l, i) => (!labeled.has(i) && /^\d{12,24}$/.test(l) ? l : null)).filter(Boolean);
+  o.code = codes.find((c) => c.startsWith('734')) || codes[0] || '';
+  return o;
+}
+
+/** Metin Trendyol listesi biçimindeyse siparişleri döndürür, değilse boş dizi */
+export function parseOrderList(text) {
+  const ls = String(text || '').split(/\r?\n/).map((l) => l.replace(/\s+/g, ' ').trim());
+  const starts = [];
+  ls.forEach((l, i) => { if (/^#\d{6,}$/.test(l)) starts.push(i); });
+  return starts.map((s, n) => parseBlock(ls.slice(s, n + 1 < starts.length ? starts[n + 1] : ls.length)));
+}
+
+// ------------------------------------------------------------------ mağaza → etikette yazan firma
+const COMPANY_DEFAULTS = [['momordica', 'İpekyolu'], ['pharmalabs', 'İpekyolu'], ['dailyorganic', 'Power Vital'], ['homence', 'Homence'], ['ultranatura', 'Formlife'], ['beesafe', 'Apidemia']];
+/** Mağaza ayarındaki firma; boşsa mağaza adından varsayılan (Daily Organics → Power Vital…) */
+export function companyFor(store) {
+  if (!store) return '';
+  if (store.company) return store.company;
+  const k = fold(store.name).replace(/\s+/g, '');
+  const hit = COMPANY_DEFAULTS.find(([key]) => k.includes(key));
+  return hit ? hit[1] : '';
+}
