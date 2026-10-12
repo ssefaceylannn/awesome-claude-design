@@ -702,3 +702,23 @@ a { color: var(--brand); }
   #print .plabel { break-after: page; page-break-after: always; font-family: "Inter", Arial, Helvetica, sans-serif; }
   #print .plabel:last-child { break-after: auto; page-break-after: auto; }
 }
+
+/* kombinasyon listesi çıktısı (A4, sütunlar sayfa genişliğine sığar) */
+@media print {
+  #print .cprint { font: 10.5pt/1.3 Arial, Helvetica, sans-serif; color: #000; }
+  html, body { background: #fff !important; } /* sitenin krem zemini kâğıda basılmasın */
+  #print .cprint h1, #print .cprint h2 { font-family: Arial, Helvetica, sans-serif; letter-spacing: 0; }
+  #print .cprint h1 { font-size: 15pt; margin: 0 0 2px; }
+  #print .cprint > p { font-size: 9pt; color: #444; margin: 0 0 8px; }
+  #print .cprint section { margin-top: 10px; break-inside: auto; }
+  #print .cprint h2 { font-size: 12pt; margin: 0 0 4px; break-after: avoid; }
+  #print .cprint h2 small { font-weight: 400; color: #444; font-size: 9.5pt; }
+  #print .cprint table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+  #print .cprint th, #print .cprint td { border: 1px solid #999; padding: 4px 6px; overflow-wrap: anywhere; vertical-align: middle; }
+  #print .cprint th { background: #eee; text-align: center; }
+  #print .cprint th.num, #print .cprint td.num { width: 30mm; text-align: center; }
+  #print .cprint td.num { white-space: nowrap; }
+  #print .cprint.nop th.num, #print .cprint.nop td.num { width: auto; }
+  #print .cprint tr { break-inside: avoid; }
+  #print .cprint tr.karma td { font-weight: 700; background: #f3f3f3; }
+}

@@ -308,7 +308,7 @@ async function importOrders(req, user) {
   await pmap([...buckets.keys()], 16, async (k) => buckets.set(k, await getJSON(k, {})));
   const lastOrder = await getJSON('meta/last-order');
 
-  const seen = new Set();
+  const seen = new Map(); // k → bu yüklemedeki ilk görülüşünün hedef kaydı (devam etiketi için)
   const results = orders.map((o, i) => {
     if (o.orphan) return { i, status: lastOrder ? 'merge' : 'error', target: lastOrder, note: lastOrder ? 'Önceki yüklemedeki son siparişin devamı' : 'Devam etiketinin ait olduğu sipariş bulunamadı' };
     if (!o.orderNo) return { i, status: 'error', note: 'Sipariş numarası yok' };
@@ -324,8 +324,13 @@ async function importOrders(req, user) {
       const other = Object.keys(bucket).find((x) => x.endsWith('|' + o.orderNo));
       if (other) { existingDate = bucket[other]; existingKey = other; }
     }
-    if (seen.has(k)) return { i, k, status: 'dup', note: 'Aynı yüklemede tekrar ediyor' };
-    seen.add(k);
+    if (seen.has(k)) {
+      // Aynı yüklemede ana etiket + ayrı gelen "Devamı" etiketi: ürünleri ana siparişe eklenir (atılmaz)
+      return o.startsAsContinuation
+        ? { i, k, status: 'merge', target: seen.get(k), note: 'Aynı yüklemedeki siparişin devamı, siparişe eklenecek' }
+        : { i, k, status: 'dup', note: 'Aynı yüklemede tekrar ediyor' };
+    }
+    seen.set(k, existingDate ? { k: existingKey, date: existingDate } : { k, date: o.date });
     if (existingDate) {
       return o.startsAsContinuation
         ? { i, k, status: 'merge', target: { k: existingKey, date: existingDate }, note: 'Önceki etiketin devamı, mevcut siparişe eklenecek' }
@@ -471,6 +476,10 @@ async function importOrders(req, user) {
     dates: [...dayAdds.keys()],
     orders: results.filter((r) => r.status === 'new').map((r) => ({ k: r.k, date: orders[r.i].date, no: orders[r.i].orderNo })),
     units: results.filter((r) => r.status === 'new').reduce((s, r) => s + orders[r.i].items.reduce((a, it) => a + it.qty, 0), 0),
+    // Bu yüklemede yeniden gelen (daha önce kaydedilmiş) siparişler: kombinasyon analizinde
+    // "bu yüklemede ne vardı" sorusunun cevabı yeni + yeniden gelenlerdir
+    refs: [...new Map(results.filter((r) => (r.status === 'dup' || r.status === 'fix' || r.status === 'merge') && r.target && r.target.k)
+      .map((r) => [r.target.k, { k: r.target.k, date: r.target.date }])).values()],
   };
   const batch = await update(`batch/${batchId}`, (cur) => {
     if (!cur) return { id: batchId, at, by: user.u, ...part, dates: part.dates.sort(), counts };
@@ -480,6 +489,7 @@ async function importOrders(req, user) {
       pages: cur.pages || part.pages,
       dates: [...new Set([...cur.dates, ...part.dates])].sort(),
       orders: cur.orders.concat(part.orders),
+      refs: [...new Map((cur.refs || []).concat(part.refs).map((x) => [x.k, x])).values()].slice(0, 20000),
       units: cur.units + part.units,
       counts: Object.fromEntries(Object.keys(counts).map((key) => [key, (cur.counts[key] || 0) + counts[key]])),
     };
@@ -689,7 +699,20 @@ export default async (req) => {
       const limit = int(url.searchParams.get('limit'), 1, 100, 30);
       const keys = (await listKeys('batch/')).sort().reverse().slice(0, limit);
       const batches = await pmap(keys, 12, (k) => getJSON(k));
-      return json({ batches: batches.filter(Boolean).map(({ orders, ...b }) => ({ ...b, orderCount: orders ? orders.length : 0 })) });
+      return json({ batches: batches.filter(Boolean).map(({ orders, refs, ...b }) => ({ ...b, orderCount: orders ? orders.length : 0, refCount: refs ? refs.length : 0 })) });
+    }
+
+    // Seçilen yüklemelerdeki tüm siparişler (yeni + yeniden gelen): [{k, date}]
+    if (path === 'batch/refs' && m === 'GET') {
+      const ids = String(url.searchParams.get('ids') || '').split(',').filter((x) => /^[0-9a-z-]{10,40}$/.test(x)).slice(0, 100);
+      const list = await pmap(ids, 12, (bid) => getJSON(`batch/${bid}`));
+      const out = new Map();
+      list.forEach((bt, n) => {
+        if (!bt) return;
+        for (const o of bt.orders || []) out.set(o.k, { k: o.k, date: o.date, batch: ids[n] });
+        for (const o of bt.refs || []) if (!out.has(o.k)) out.set(o.k, { k: o.k, date: o.date, batch: ids[n], again: true });
+      });
+      return json({ refs: [...out.values()] });
     }
 
     if (path === 'batch' && m === 'DELETE') {
