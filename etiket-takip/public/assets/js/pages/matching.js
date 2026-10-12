@@ -44,7 +44,7 @@ export default async function matchingPage(ctx) {
   function render() {
     const products = state.config.products.filter((p) => p.active !== false);
     const pname = (id) => state.ctx.label(id);
-    const rows = names.map((x) => ({ ...x, r: state.ctx.match(x.raw) })).map((x) => ({ ...x, cls: classify(x.r, x) }));
+    const rows = names.map((x) => ({ ...x, r: state.ctx.match(x.raw, x.single ? { single: true } : undefined) })).map((x) => ({ ...x, cls: classify(x.r, x) }));
     const count = Object.fromEntries(FILTERS.map(([k]) => [k, k === 'all' ? rows.length : rows.filter((x) => x.cls === k).length]));
     if (!filter) filter = count.todo ? 'todo' : count.ambiguous ? 'ambiguous' : 'all';
     const ql = q.toLocaleLowerCase('tr-TR');

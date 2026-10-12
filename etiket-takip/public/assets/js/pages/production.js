@@ -11,6 +11,8 @@ export default async function productionPage(ctx) {
   let includeZero = localStorage.getItem('et-zero') === '1';
   let view = 'list';
   let R = null;
+  // Kayıt geçmişindeki "Rapor": yalnızca o yüklemenin siparişleri
+  let batch = /^[0-9a-z-]{10,40}$/.test(ctx.params.batch || '') ? ctx.params.batch : '';
   // Ekran görünümü (Excel "sabit liste"yi etkilemez)
   let sortKey = 'catalog', sortDir = 1, q = '', cats = [], onlyCamp = false;
 
@@ -48,6 +50,7 @@ export default async function productionPage(ctx) {
   $('#q').addEventListener('input', (e) => { q = e.target.value.toLocaleLowerCase('tr-TR').trim(); render(); });
   $('#onlyCamp').addEventListener('change', (e) => { onlyCamp = e.target.checked; render(); });
   $('#sort').addEventListener('change', (e) => { const [k, d] = e.target.value.split(':'); sortKey = k; sortDir = +d || 1; render(); });
+  $('#body').addEventListener('click', (e) => { if (e.target.id === 'allBatches') { e.preventDefault(); batch = ''; load(); } });
 
   /** Ekranda gösterilecek satırlar: filtre + sıralama */
   function viewRows() {
@@ -71,8 +74,9 @@ export default async function productionPage(ctx) {
   async function load() {
     mount($('#body'), html`<div class="loading"><div class="spin"></div><span>Hesaplanıyor…</span></div>`);
     try {
-      const orders = await fetchOrders(from, to);
+      const all = await fetchOrders(from, to);
       if (!ctx.isCurrent()) return;
+      const orders = batch ? all.filter((o) => o.batch === batch) : all;
       R = aggregate(orders, state.ctx, filter);
       render();
     } catch (e) { mount($('#body'), html`<div class="callout err">${icon('alert')}<div class="c">${e.message}</div></div>`); }
@@ -80,13 +84,14 @@ export default async function productionPage(ctx) {
 
   function render() {
     if (!R) return;
-    ctx.setSub(`${rangeLabel(from, to)} · ${filterLabel(filter)}`);
+    ctx.setSub(`${rangeLabel(from, to)} · ${filterLabel(filter)}${batch ? ' · tek yükleme' : ''}`);
     const rows = viewRows();
     const unmatchedUnits = [...R.unmatched.values()].reduce((s, u) => s + u.units, 0);
     const maxT = Math.max(1, ...rows.map((r) => r.total));
     const stores = [...R.stores.values()];
 
     mount($('#body'), html`<div class="stack">
+      ${batch ? html`<div class="callout info">${icon('history')}<div class="c"><b>Yalnızca seçilen yüklemenin siparişleri gösteriliyor</b><a href="#" id="allBatches">Bu tarihlerdeki tüm siparişleri göster</a></div></div>` : ''}
       <div class="kpis">
         <div class="kpi"><div class="l">${icon('receipt')}Sipariş</div><div class="v">${n(R.orders)}</div><div class="s">${stores.length} mağazadan</div></div>
         <div class="kpi"><div class="l">${icon('box')}Etiketteki ürün</div><div class="v">${n(R.labelUnits)}</div><div class="s">${R.orders ? (R.labelUnits / R.orders).toLocaleString('tr-TR', { maximumFractionDigits: 2 }) : 0} / sipariş</div></div>

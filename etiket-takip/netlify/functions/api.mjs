@@ -429,16 +429,17 @@ async function importOrders(req, user) {
 
   // 3) Etiketlerde görülen ürün adları (eşleştirme ekranı için)
   const names = new Map();
-  const addName = (it, date, sign) => {
+  const addName = (it, date, sign, single) => {
     const k = fold(it.name);
     const n = names.get(k) || { raw: it.name, qty: 0, lines: 0, date };
-    n.qty += sign * it.qty; n.lines += sign; names.set(k, n);
+    n.qty += sign * it.qty; n.lines += sign; if (single) n.single = true; names.set(k, n);
   };
   for (const r of results) {
     if (r.status !== 'new' && r.status !== 'merge' && r.status !== 'fix') continue;
     const o = orders[r.i];
     // Yeniden gönderimde ürünü elle seçilmiş satırlar eşleştirme ekranına düşmez
-    for (const it of o.items) if (!it.productId) addName(it, o.date, 1);
+    // Hepsiburada satırı tek ürün kalemidir; eşleştirme ekranı da adı bölmeden değerlendirir
+    for (const it of o.items) if (!it.productId) addName(it, o.date, 1, o.platform === 'hepsiburada');
     // Düzeltilen kayıttaki eski (hatalı okunmuş) adlar eşleştirme ekranından düşer
     if (r.status === 'fix') for (const it of r.old || []) addName(it, o.date, -1);
   }
@@ -447,6 +448,7 @@ async function importOrders(req, user) {
       for (const [k, n] of names) {
         const cur = all[k] || { raw: n.raw, qty: 0, lines: 0, firstSeen: n.date };
         cur.qty += n.qty; cur.lines += n.lines; cur.raw = cur.raw || n.raw;
+        if (n.single) cur.single = true;
         if (n.qty > 0) { cur.lastSeen = n.date > (cur.lastSeen || '') ? n.date : cur.lastSeen; delete cur.archive; }
         if (cur.lines <= 0 || cur.qty <= 0) delete all[k];
         else all[k] = cur;
@@ -787,7 +789,7 @@ export default async (req) => {
         for (const [k, v] of Object.entries(b.labelnames).slice(0, 50000)) {
           const key = fold(k);
           if (!key || !v || typeof v !== 'object' || key === '__proto__') continue;
-          clean[key] = { raw: str(v.raw, 200), qty: int(v.qty, 0, 1e9, 0), lines: int(v.lines, 0, 1e9, 0), ...(isYmd(v.firstSeen) ? { firstSeen: v.firstSeen } : {}), ...(isYmd(v.lastSeen) ? { lastSeen: v.lastSeen } : {}), ...(v.archive ? { archive: true } : {}) };
+          clean[key] = { raw: str(v.raw, 200), qty: int(v.qty, 0, 1e9, 0), lines: int(v.lines, 0, 1e9, 0), ...(isYmd(v.firstSeen) ? { firstSeen: v.firstSeen } : {}), ...(isYmd(v.lastSeen) ? { lastSeen: v.lastSeen } : {}), ...(v.archive ? { archive: true } : {}), ...(v.single ? { single: true } : {}) };
         }
         await update('labelnames', (all) => ({ ...all, ...clean }), {});
       }

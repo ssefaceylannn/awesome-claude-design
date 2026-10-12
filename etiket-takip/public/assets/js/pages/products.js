@@ -72,8 +72,9 @@ export async function productForm(product, { presetName } = {}) {
         const nameOf = (id) => (list.find((x) => x.id === id) || {}).name || '?';
         const hits = [];
         for (const ln of names) {
-          const r = m(ln.raw);
-          const b = before(ln.raw);
+          const o1 = ln.single ? { single: true } : undefined;
+          const r = m(ln.raw, o1);
+          const b = before(ln.raw, o1);
           if (has(r, next.id) || has(b, next.id)) hits.push({ ln, r, b });
         }
         hits.sort((a, b) => b.ln.qty - a.ln.qty);
@@ -255,7 +256,7 @@ export default async function productsPage(ctx) {
     const all = state.config.products;
     const counts = new Map();
     for (const ln of names) {
-      const m = state.ctx.match(ln.raw);
+      const m = state.ctx.match(ln.raw, ln.single ? { single: true } : undefined);
       for (const id of m.parts ? m.parts.map((x) => x.productId) : m.productId ? [m.productId] : []) counts.set(id, (counts.get(id) || 0) + 1);
     }
     const cats = [...new Set(all.map((p) => p.category).filter(Boolean))].sort(collator.compare);

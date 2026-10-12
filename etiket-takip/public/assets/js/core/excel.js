@@ -8,7 +8,29 @@ const GRAY = 'FFF3F5F4';
 const thin = { style: 'thin', color: { argb: 'FFD0D7D3' } };
 const border = { top: thin, left: thin, bottom: thin, right: thin };
 
-async function lib() {
+/**
+ * Tüm indirilen Excel'ler: Calibri 11 punto, yatay ve dikey ortalı (kalın/renk korunur).
+ * Kaydetmeden hemen önce her sayfanın dolu hücrelerine uygulanır.
+ */
+function finalize(wb) {
+  wb.eachSheet((ws) => {
+    ws.properties.defaultRowHeight = 18;
+    ws.eachRow({ includeEmpty: false }, (row) => {
+      row.eachCell({ includeEmpty: true }, (c) => {
+        c.font = { ...(c.font || {}), name: 'Calibri', family: 2, size: 11 };
+        c.alignment = { ...(c.alignment || {}), horizontal: 'center', vertical: 'middle' };
+      });
+    });
+  });
+}
+
+export async function save(wb, name) {
+  finalize(wb);
+  const buf = await wb.xlsx.writeBuffer();
+  download(name, new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+}
+
+export async function lib() {
   await loadScript('/assets/vendor/exceljs.min.js');
   return window.ExcelJS;
 }
@@ -157,9 +179,8 @@ export async function exportProduction({ R, ctx, from, to, filterLabel, includeZ
   body(wsO, 4, lines, [6]);
   wsO.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3 + lines.length, column: 9 } };
 
-  const buf = await wb.xlsx.writeBuffer();
   const stamp = from === to ? from : `${from}_${to}`;
-  download(`uretim-listesi_${stamp}.xlsx`, new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  await save(wb, `uretim-listesi_${stamp}.xlsx`);
 }
 
 /** Basit tablo çıktısı (sipariş listesi vb.) */
@@ -172,8 +193,7 @@ export async function exportTable(name, sheetTitle, columns, rows) {
   header(ws, 3, columns.map((c) => c.label));
   body(ws, 4, rows, columns.map((c, i) => (c.num ? i : -1)).filter((i) => i >= 0));
   ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3 + rows.length, column: columns.length } };
-  const buf = await wb.xlsx.writeBuffer();
-  download(name, new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  await save(wb, name);
 }
 
 /**
@@ -197,7 +217,6 @@ export async function exportFixedList({ R, ctx, from, to, filterLabel }) {
   info.columns = [{ width: 24 }, { width: 60 }];
   [['Tarih', rangeLabel(from, to)], ['Kapsam', filterLabel], ['Sipariş', R.orders], ['Ürün sayısı', ctx.products.length], ['Oluşturma', trDateTime(new Date().toISOString())]]
     .forEach((r, i) => { info.getRow(i + 1).values = r; });
-  const buf = await wb.xlsx.writeBuffer();
   const stamp = from === to ? from : `${from}_${to}`;
-  download(`sabit-liste_${stamp}.xlsx`, new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  await save(wb, `sabit-liste_${stamp}.xlsx`);
 }

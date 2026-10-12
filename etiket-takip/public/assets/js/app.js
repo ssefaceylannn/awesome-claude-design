@@ -11,6 +11,7 @@ const NAV = [
     { id: 'upload', label: 'Etiket Yükle', icon: 'upload', role: 'personel' },
     { id: 'resend', label: 'Yeniden Gönderim', icon: 'refresh', role: 'personel' },
     { id: 'production', label: 'Üretim Listesi', icon: 'factory' },
+    { id: 'combos', label: 'Kombinasyon Analizi', icon: 'copy' },
     { id: 'orders', label: 'Siparişler', icon: 'receipt' },
     { id: 'calendar', label: 'Günlük Arşiv', icon: 'calendar' },
     { id: 'scan', label: 'Barkod Kontrol', icon: 'scan', role: 'personel' },
@@ -120,7 +121,7 @@ async function unmatchedBadge() {
     let n = 0;
     for (const v of Object.values(names)) {
       if (isArchiveOnly(v)) continue;
-      const m = state.ctx.match(v.raw);
+      const m = state.ctx.match(v.raw, v.single ? { single: true } : undefined);
       if (!m.productId && !m.ignored && !m.parts && !brandResolved(m, state.ctx)) n++;
     }
     setBadge('matching', n);

@@ -189,7 +189,7 @@ function computeSummary(o, ctx) {
   const store = ctx.resolveStore(o.sender);
   const platform = (store && store.platform) || o.platform || '';
   const toLines = (list) => (list || []).flatMap((it) => {
-    const m = byBrand(ctx.matchFor(store)(it.name), store, o.sender, ctx, it.name);
+    const m = byBrand(ctx.matchFor(store)(it.name, lineOpts(o, store)), store, o.sender, ctx, it.name);
     if (m.parts && m.parts.length) return m.parts.map((p) => ({ raw: it.name, qty: it.qty, productId: p.productId, ignored: false, method: m.method, mult: p.qty, units: it.qty * p.qty, candidates: [] }));
     return [{ raw: it.name, qty: it.qty, productId: m.productId, ignored: !!m.ignored, method: m.method, mult: 1, units: it.qty, candidates: m.candidates }];
   });
@@ -197,6 +197,9 @@ function computeSummary(o, ctx) {
   const rewards = toLines(o.bonus).filter((l) => !l.ignored).map((l) => ({ campaignId: '__archive', name: 'Arşiv (eski sistem kampanyaları)', productId: l.productId, raw: l.raw, qty: l.units }));
   return { order: o, store, platform, lines, rewards, summary: true };
 }
+
+/** Hepsiburada satırları tek ürün kalemidir: eşleştirici adı birden çok ürüne bölmez */
+const lineOpts = (o, store) => ((store && store.platform === 'hepsiburada') || o.platform === 'hepsiburada' ? { single: true } : undefined);
 
 export function computeOrder(o, ctx) {
   if (o.summary) return computeSummary(o, ctx);
@@ -207,7 +210,7 @@ export function computeOrder(o, ctx) {
     if (it.productId && ctx.productsById.has(it.productId)) {
       return [{ raw: it.name, qty: it.qty, productId: it.productId, ignored: false, method: 'pinned', mult: 1, units: it.qty, candidates: [] }];
     }
-    const m = byBrand(ctx.matchFor(store)(it.name), store, o.sender, ctx, it.name);
+    const m = byBrand(ctx.matchFor(store)(it.name, lineOpts(o, store)), store, o.sender, ctx, it.name);
     // Set / birleşik ad: her ürün ayrı satır olarak sayılır
     if (m.parts && m.parts.length) {
       return m.parts.map((p) => ({ raw: it.name, qty: it.qty, productId: p.productId, ignored: false, method: m.method, bundle: true, mult: p.qty, units: it.qty * p.qty, candidates: [] }));

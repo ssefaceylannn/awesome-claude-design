@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import { createMatcher } from '../public/assets/js/shared/matcher.js';
-import { createContext, aggregate, productionRows } from '../public/assets/js/shared/calc.js';
+import { createContext, aggregate, productionRows, computeOrder } from '../public/assets/js/shared/calc.js';
 import { fold } from '../public/assets/js/shared/text.js';
 import { signToken, verifyToken, parseUsers } from '../netlify/lib/auth.js';
 
@@ -61,6 +61,63 @@ await test('Code 128 barkod: çöz ve karşılaştır', async () => {
   assert.equal(code128Widths('7340037450818569').reduce((a, b) => a + b, 0), 11 * 11 + 2); // başlangıç + 8 çift + sağlama + bitiş(13)
 });
 
+await test('Kombinasyon analizi: aynı bileşim gruplanır, eşiğin altı Karma Siparişler', async () => {
+  const { analyzeCombos, parseComboPaste, KARMA } = await import('../public/assets/js/shared/combos.js');
+  const ps = [{ id: 'z', name: 'Zencefil Shot' }, { id: 'c', name: 'Coconut Mix' }, { id: 'd', name: 'Detox Mix' }];
+  const ctx = createContext({ products: ps, stores: [], campaigns: [{ id: 'h', name: 'Hediye', active: true, condition: 'order', rewards: [{ productId: 'd', qty: 1 }], storeIds: [], platforms: [], triggerProductIds: [] }], aliases: {}, settings: {} });
+  const mk = (k, items) => ({ k, date: '2026-10-12', sender: 'X', items });
+  const orders = [];
+  for (let i = 0; i < 10; i++) orders.push(mk('a' + i, [{ name: 'Zencefil Shot', qty: 2 }]));
+  // Aynı ürün iki satırda → tek satır x2 sayılır; ürün sırası fark etmez
+  for (let i = 0; i < 10; i++) orders.push(mk('b' + i, i % 2 ? [{ name: 'Coconut Mix', qty: 1 }, { name: 'Zencefil Shot', qty: 1 }] : [{ name: 'Zencefil Shot', qty: 1 }, { name: 'Coconut Mix', qty: 1 }]));
+  for (let i = 0; i < 9; i++) orders.push(mk('c' + i, [{ name: 'Coconut Mix', qty: 1 }, { name: 'Coconut Mix', qty: 1 }]));
+  orders.push(mk('e', [{ name: 'Bilinmeyen Ürün', qty: 1 }]));
+  const computed = orders.map((o) => computeOrder(o, ctx));
+  const R = analyzeCombos(computed, ctx, { min: 10 });
+  assert.equal(R.orders, 30);
+  assert.deepEqual(R.groups.map((g) => [g.label, g.orders]), [['Zencefil Shot x1 + Coconut Mix x1', 10], ['Zencefil Shot x2', 10]]); // ürünler katalog sırasıyla
+  assert.equal(R.karma.orders, 10); // 9 × Coconut x2 + 1 eşleşmeyen
+  assert.deepEqual(R.karma.groups.map((g) => [g.label, g.orders]), [['Coconut Mix x2', 9], ['⚠ Bilinmeyen Ürün x1', 1]]);
+  assert.equal(R.karma.units, 19);
+  // Kampanya varsayılan olarak bileşime girmez; istenirse pakete eklenir
+  assert.equal(analyzeCombos(computed, ctx, { min: 10, includeRewards: true }).groups[0].label.includes('Detox Mix x1'), true);
+  // Eşik değişince gruplar değişir
+  assert.equal(analyzeCombos(computed, ctx, { min: 9 }).groups.length, 3);
+  // Gönderime Hazır sayfası metni (eski araçla aynı mantık)
+  const p = parseComboPaste('Zencefil Shot x2\n12 sipariş\n3 sipariş yakında gecikecek\nCoconut Mix × 1 + Detox Mix x1\n10 sipariş\nPTT Kargo: 4\nKarma Siparişler 23 sipariş\nbilinmeyen satır');
+  assert.deepEqual(p.cards.map((c) => [c.combo, c.total]), [['Zencefil Shot x2', 12], ['Coconut Mix x1 + Detox Mix x1', 10], [KARMA, 23]]);
+  assert.deepEqual(p.unrecognized, ['bilinmeyen satır']);
+});
+
+await test('Hepsiburada CSV: paket = sipariş, satır başına kalem, adet sütundan, mağaza A1\'den', async () => {
+  const { parseCsv, readTable } = await import('../public/assets/js/core/sheets.js');
+  const head = 'Barkod;Paket Numarası;Kargo Firması;Sipariş Tarihi;Kargo Takip No;Sipariş Numarası;Kalem Numarası;Alıcı;Şehir;Semt;Hepsiburada Ürün Kodu;Satıcı Stok Kodu;Ürün Adı;Adet;Faturalandırılacak Satış Fiyatı;Paket Durumu';
+  const row = (bk, pk, sn, k, name, qty, amt, st = 'Gönderime Hazır') => `${bk};${pk};hepsiJET;12-10-2026 12:59:59;;${sn};${k};ÖRNEK ALICI;İstanbul;Kadıköy;HBC1;SKU;${name};${qty};${amt};${st}`;
+  const csv = '﻿Momordica;;;\r\n' + head + '\r\n'
+    + row('62700000000011', '5500000001', '4000000001', 10, 'Momordica Zencefil Shot - 10 Adet, Zencefil, Zerdeçal, Portakal, Bal ve Limon İçeren', 2, '364,0000') + '\r\n'
+    + row('62700000000022', '5500000002', '4000000002', 10, 'Momordica Coconut Mix - 250 ml', 1, '1.188,5000') + '\r\n'
+    + row('62700000000022', '5500000002', '4000000002', 11, '"Momordica Detoxmix - 250 ml; cam şişe"', 3, '10,00') + '\r\n'
+    + row('62700000000033', '5500000003', '4000000003', 10, 'Momordica Coconut Mix - 250 ml', 1, '5,00', 'İptal Edildi') + '\r\n';
+  const byKey = new Map();
+  const r = readTable(parseCsv(csv), 'hb.csv', '2026-10-12', {}, byKey);
+  assert.deepEqual(r, { rows: 4, skipped: 1, hb: true });
+  const list = [...byKey.values()];
+  assert.equal(list.length, 2);
+  assert.deepEqual(list.map((o) => [o.orderNo, o.platformOrderNo, o.cargoCode, o.platform, o.storeHint, o.items.reduce((s, i) => s + i.qty, 0)]), [['5500000001', '4000000001', '62700000000011', 'hepsiburada', 'Momordica', 2], ['5500000002', '4000000002', '62700000000022', 'hepsiburada', 'Momordica', 4]]);
+  assert.equal(list[1].items[1].name, 'Momordica Detoxmix - 250 ml; cam şişe'); // tırnaklı alan
+  assert.equal(list[1].amount, 1198.5);
+  assert.equal(list[0].items[0].qty, 2); // "10 Adet" ürün adında, adet değil
+  // Hepsiburada satırı tek ürün: uzun açıklamadaki başka ürün kelimeleri satırı bölmez
+  const ps = [{ id: 'dms', name: 'Detox Mix Shot', brand: 'Momordica' }, { id: 'es', name: 'Elma Sirkesi', brand: 'Momordica' }];
+  const stores = [{ id: 'hb', name: 'Momordica Hepsiburada', platform: 'hepsiburada', senders: [] }, { id: 'ty', name: 'Momordica Trendyol', platform: 'trendyol', senders: [] }];
+  const cx = createContext({ products: ps, stores, campaigns: [], aliases: {}, settings: {} });
+  const name = 'Momordica Detox Mix Shot 10 Adet Yeşil Elma Sirkesi Aromalı Sağlıklı İçecek';
+  const hbLines = computeOrder({ k: 'h', sender: 'Momordica Hepsiburada', platform: 'hepsiburada', items: [{ name, qty: 1 }] }, cx).lines;
+  assert.deepEqual(hbLines.map((l) => [l.productId, l.units]), [['dms', 1]]);
+  // Diğer platformlarda set bölmesi eskisi gibi çalışır
+  assert.equal(computeOrder({ k: 't', sender: 'Momordica Trendyol', items: [{ name, qty: 1 }] }, cx).lines.length, 2);
+});
+
 await test('Metin sadeleştirme ve birimler', () => {
   assert.equal(fold("ULTRA NATURA Detoks Shot 7'li"), 'ultra natura detoks shot 7li');
   assert.equal(fold('Sultan Sirkesi 1 Lt'), 'sultan sirkesi 1000ml');
@@ -79,6 +136,9 @@ await test('Detox Shot ile Detox Mix karışmaz, ekler ayıklanır', () => {
   assert.equal(set.method, 'bundle');
   assert.deepEqual(set.parts.map((x) => x.productId).sort(), ['mix', 'shot']);
   assert.equal(m('Elma Sirkesi').productId, null);
+  // Bitişik yazım: "Detoxmix" = Detox Mix, "Detoxshot" = Detox Shot (karışmaz)
+  assert.equal(m('Momordica Detoxmix - 250 ml').productId, 'mix');
+  assert.equal(m('Detoxshot').productId, 'shot');
 });
 
 await test('Birleşik ad iki ürüne bölünür (Daily Shake Ginger Shot)', () => {

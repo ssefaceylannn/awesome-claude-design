@@ -102,7 +102,7 @@ export function createMatcher(config) {
       const used = new Set();
       let score = 0;
       const free = (j) => !used.has(j) && !(excluded && excluded.has(j));
-      const ok = rule.every((alts) => {
+      const one = (alts) => {
         // Önce birebir kelime, yoksa ekli/yazım hatalı kelime (daha düşük puan)
         for (const kw of alts) {
           const i = toks.findIndex((t, j) => free(j) && t === kw);
@@ -119,13 +119,29 @@ export function createMatcher(config) {
           if (i >= 0) { used.add(i); used.add(i + 1); score += 90; return true; }
         }
         return false;
-      });
+      };
+      // Etiketteki tek kelime, kuraldaki ardışık iki kelimenin bitişik yazımı: "Detoxmix" = detox + mix.
+      // Ek kontrolünden önce bakılır; yoksa "detox" ~ "detoxmix" (ek sanılır) tutar ve "mix" boşta kalır.
+      const joined = (a, b) => {
+        for (const x of a) for (const y of b) {
+          if (x.length < 3 || y.length < 2 || /\d/.test(x + y)) continue;
+          const i = toks.findIndex((t, j) => free(j) && t === x + y);
+          if (i >= 0) { used.add(i); score += 180; return true; }
+        }
+        return false;
+      };
+      let ok = true;
+      for (let r = 0; r < rule.length && ok; r++) {
+        const exact = rule[r].some((kw) => toks.some((t, j) => free(j) && t === kw));
+        if (!exact && r + 1 < rule.length && joined(rule[r], rule[r + 1])) { r++; continue; }
+        ok = one(rule[r]);
+      }
       if (ok && (!best || score > best.score)) best = { score, used };
     }
     return best;
   }
 
-  function auto(key) {
+  function auto(key, single = false) {
     const toks = key.split(' ').filter(Boolean);
     const cands = [];
     for (const e of entries) {
@@ -142,9 +158,11 @@ export function createMatcher(config) {
 
     // Set / birleşik ad: "Daily Shake Ginger Shot" → Daily Shake + Ginger Shot.
     // Ürünler farklı kelimelerle eşleşmeli; tek bir ürün adın tamamını daha iyi karşılıyorsa set sayılmaz.
+    // single: satır kesin tek ürün (ör. Hepsiburada'da her satır bir kalem; uzun açıklamalı adlar
+    // "… Elma Sirkesi Aromalı" gibi başka ürün kelimeleri içerir) → set bölmesi yapılmaz
     const chosen = [cands[0]];
     const taken = new Set(cands[0].used);
-    for (const c of cands.slice(1)) {
+    for (const c of single ? [] : cands.slice(1)) {
       if (chosen.some((x) => x.id === c.id)) continue;
       const b = scoreEntry(c.e, toks, taken);
       if (!b) continue;
@@ -180,9 +198,11 @@ export function createMatcher(config) {
     };
   }
 
-  function match(raw) {
+  function match(raw, opts) {
     const key = fold(raw);
-    if (cache.has(key)) return cache.get(key);
+    const single = !!(opts && opts.single);
+    const ck = single ? '1|' + key : key;
+    if (cache.has(ck)) return cache.get(ck);
     let res;
     const al = aliases[key];
     const parts = al && al.productId === BUNDLE && Array.isArray(al.parts) ? al.parts.filter((x) => byId.has(x.productId)) : null;
@@ -194,11 +214,11 @@ export function createMatcher(config) {
         ? { productId: null, ignored: true, method: 'manual', confidence: 1, multiplier: 1, candidates: [] }
         : { productId: al.productId, method: 'manual', confidence: 1, multiplier: Math.max(1, +al.multiplier || 1), candidates: [] };
     } else {
-      res = auto(key);
+      res = auto(key, single);
       if (!res.multiplier) res.multiplier = 1;
     }
     res.key = key;
-    cache.set(key, res);
+    cache.set(ck, res);
     return res;
   }
 

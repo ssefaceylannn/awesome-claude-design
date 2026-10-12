@@ -1,11 +1,12 @@
 // Etiket yükleme: PDF oku → önizle (mükerrer / devam / eşleşme / kampanya) → kaydet.
-import { html, mount, personName, icon, toast, n, trDate, trDateTime, today, confirmDialog, busy, emptyState, storeTag, rangeLabel, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
+import { html, mount, personName, icon, toast, modal, n, trDate, trDateTime, today, confirmDialog, busy, emptyState, storeTag, rangeLabel, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
 import { api, state, isAdmin, invalidateOrders, setRange } from '../core/api.js';
 import { readLabels } from '../core/labels.js';
 import { readSheets } from '../core/sheets.js';
 import { computeOrder } from '../shared/calc.js';
 import { storeForm } from './stores.js';
 import { refreshBadges } from '../app.js';
+import { fold } from '../shared/text.js';
 
 const ST = {
   new: html`<span class="badge ok">Yeni</span>`,
@@ -25,10 +26,10 @@ export default async function uploadPage(ctx) {
   mount(ctx.el, html`<div class="stack">
     <div class="card"><div class="card-b stack">
       <label class="drop" id="drop">
-        <input type="file" id="file" accept="application/pdf,.pdf,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden>
+        <input type="file" id="file" accept="application/pdf,.pdf,.xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden>
         <div class="ic">${icon('upload')}</div>
-        <b>Etiket PDF'lerini ve Excel sipariş listelerini buraya sürükleyin</b>
-        <div class="muted">veya tıklayıp seçin · dosya sayısı sınırı yok (100–200+ PDF, birden çok Excel) · PDF ve Excel birlikte atılabilir</div>
+        <b>Etiket PDF'lerini ve Excel/CSV sipariş listelerini buraya sürükleyin</b>
+        <div class="muted">veya tıklayıp seçin · dosya sayısı sınırı yok (100–200+ PDF, birden çok Excel) · PDF ve Excel birlikte atılabilir · Hepsiburada “Gönderime Hazır” listesi (.csv/.xlsx) de okunur</div>
       </label>
       <div class="row wrap bottom">
         <label class="f">Sipariş tarihi<select class="input" id="dateMode" style="width:auto">
@@ -52,16 +53,56 @@ export default async function uploadPage(ctx) {
   const drop = $('#drop');
   $('#file').addEventListener('change', (e) => { handle([...e.target.files]); e.target.value = ''; });
   const isPdf = (f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
-  const isXlsx = (f) => /\.xlsx$/i.test(f.name);
+  const isXlsx = (f) => /\.(xlsx|csv)$/i.test(f.name);
   ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
   ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
   drop.addEventListener('drop', (e) => handle([...e.dataTransfer.files]));
+
+  /** A1'deki ad → tek bir Hepsiburada mağazası (yoksa / birden çoksa null) */
+  function hbStoreFor(hint) {
+    const k = fold(hint || '').replace(/\s+/g, '');
+    if (k.length < 3) return null;
+    const hits = state.config.stores.filter((st) => st.active !== false && st.platform === 'hepsiburada'
+      && [st.name, ...(st.senders || [])].some((x) => fold(x).replace(/\s+/g, '').includes(k)));
+    return hits.length === 1 ? hits[0] : null;
+  }
+
+  /** Hepsiburada dosyaları için mağaza seçimi → { dosyaAdı: mağaza } ya da vazgeçilirse null */
+  async function askStores(fileNames, hints = {}) {
+    // Yalnızca Hepsiburada mağazaları: bu siparişler Trendyol/ikas mağazasına karışmasın
+    const stores = state.config.stores.filter((st) => st.active !== false && st.platform === 'hepsiburada').sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+    if (!stores.length) { toast('Önce Mağazalar sayfasından platformu “Hepsiburada” olan mağazalarınızı ekleyin (ör. Momordica Hepsiburada)', 'err'); return null; }
+    let last = '';
+    try { last = localStorage.getItem('et-hb-store') || ''; } catch { /* yok */ }
+    const def = stores.find((st) => st.id === last) || null;
+    let out = null;
+    await modal({
+      title: 'Hepsiburada mağazası',
+      body: html`<div class="stack">
+        <p class="muted small">Hepsiburada sipariş listesinde mağaza adı yok. Dosyanın en üst satırına (A1 hücresine) mağaza adını yazarsanız (ör. “Momordica”) bir dahaki sefere otomatik seçilir. Şimdilik her dosyanın mağazasını seçin.</p>
+        ${fileNames.map((fn, i) => html`<label class="f">${fn}${hints[fn] ? html` <span class="hint">A1: “${hints[fn]}” — bu adla tek bir Hepsiburada mağazası bulunamadı</span>` : ''}<select class="input" data-hb="${i}"><option value="">Mağaza seçin…</option>
+          ${stores.map((st) => html`<option value="${st.id}" ${def && st.id === def.id && !hints[fn] ? 'selected' : ''}>${st.name}</option>`)}</select></label>`)}
+      </div>`,
+      actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Devam', value: 'ok', variant: 'primary' }],
+      onSubmit: (_, d) => {
+        const map = {};
+        fileNames.forEach((fn, i) => {
+          const st = stores.find((x) => x.id === d.querySelector(`[data-hb="${i}"]`).value);
+          if (!st) throw new Error(`${fn} için mağaza seçin`);
+          map[fn] = st;
+        });
+        try { localStorage.setItem('et-hb-store', map[fileNames[fileNames.length - 1]].id); } catch { /* yok */ }
+        out = map;
+      },
+    });
+    return out;
+  }
 
   async function handle(files) {
     if (!files || !files.length) return;
     const pdfs = files.filter(isPdf), sheets = files.filter(isXlsx);
     const other = files.length - pdfs.length - sheets.length;
-    if (!pdfs.length && !sheets.length) return toast('PDF veya .xlsx dosyası seçilmedi', 'err');
+    if (!pdfs.length && !sheets.length) return toast('PDF, .xlsx veya .csv dosyası seçilmedi', 'err');
     const prog = $('#prog');
     prog.classList.remove('hidden');
     const total = pdfs.length + sheets.length;
@@ -80,7 +121,32 @@ export default async function uploadPage(ctx) {
         read.files.push(...r.files);
         read.rows = r.rows;
       }
-      if (other) read.log.push({ type: 'warn', msg: `${other} dosya PDF/.xlsx olmadığı için atlandı.` });
+      if (other) read.log.push({ type: 'warn', msg: `${other} dosya PDF/.xlsx/.csv olmadığı için atlandı.` });
+      // Hepsiburada listesinde mağaza sütunu yok: A1'e yazılan addan Hepsiburada mağazası bulunur,
+      // bulunamazsa (ya da birden çok mağaza uyarsa) sorulur. Asla başka platformun mağazasına atanmaz.
+      const needFiles = [...new Set(read.orders.filter((o) => o.needStore).map((o) => o.needStore))];
+      if (needFiles.length) {
+        const hints = Object.fromEntries(read.orders.filter((o) => o.needStore).map((o) => [o.needStore, o.storeHint || '']));
+        const chosen = {};
+        const ask = [];
+        for (const fn of needFiles) {
+          const st = hbStoreFor(hints[fn]);
+          if (st) { chosen[fn] = st; read.log.push({ type: 'info', msg: `${fn}: “${hints[fn]}” → ${st.name}` }); } else ask.push(fn);
+        }
+        if (ask.length) {
+          const picked = await askStores(ask, hints);
+          if (!picked) { prog.classList.add('hidden'); return; }
+          Object.assign(chosen, picked);
+        }
+        for (const o of read.orders) {
+          if (!o.needStore) continue;
+          const st = chosen[o.needStore];
+          o.sender = st.name;
+          o.platform = st.platform || 'hepsiburada';
+          delete o.needStore;
+          delete o.storeHint;
+        }
+      }
       // Aynı paket hem PDF hem Excel'de varsa (kargo takip no) bir kez say
       const seenNo = new Set();
       read.orders = read.orders.filter((o) => {
@@ -126,6 +192,20 @@ export default async function uploadPage(ctx) {
       if (!x.c.store && x.o.sender) unknown.set(x.o.sender, (unknown.get(x.o.sender) || 0) + 1);
       for (const l of x.c.lines) if (!l.productId && !l.ignored) unmatched.set(l.raw, (unmatched.get(l.raw) || 0) + l.units);
     }
+    // Farklı ürün adlarının eşleşme özeti (yanlış eşleşmeyi kaydetmeden önce görmek için)
+    const byName = new Map();
+    for (const x of rows) {
+      if (x.r.status !== 'new' && x.r.status !== 'merge' && x.r.status !== 'fix') continue;
+      for (const l of x.c.lines) {
+        const e = byName.get(l.raw) || { raw: l.raw, qty: 0, lines: new Map() };
+        e.qty += l.qty;
+        const k = l.ignored ? '__ign' : l.productId || '__none';
+        e.lines.set(k, { productId: l.productId, ignored: l.ignored, method: l.method, mult: l.mult, units: ((e.lines.get(k) || {}).units || 0) + l.units });
+        byName.set(l.raw, e);
+      }
+    }
+    const nameRows = [...byName.values()].sort((a, b) => b.qty - a.qty);
+    const hasHb = rows.some((x) => x.o.platform === 'hepsiburada');
     const dates = [...new Set(newRows.map((x) => x.o.date))].sort();
     const list = rows.filter((x) => statusFilter === 'all' || x.r.status === statusFilter);
     const pname = (id) => state.ctx.label(id);
@@ -152,6 +232,10 @@ export default async function uploadPage(ctx) {
         ${unmatched.size ? html`<div class="callout warn">${icon('link')}<div class="c"><b>${unmatched.size} ürün adı katalogla eşleşmedi</b>
           Kaydedebilirsiniz; <a href="#/matching">Ürün Eşleştirme</a> sayfasında atadığınızda üretim listesi otomatik güncellenir.
           <div class="row wrap" style="margin-top:8px;gap:6px">${[...unmatched].slice(0, 12).map(([nm, q]) => html`<span class="chip static">${nm} · ${q}</span>`)}${unmatched.size > 12 ? html`<span class="muted small">+${unmatched.size - 12} daha</span>` : ''}</div></div></div>` : ''}
+        ${nameRows.length ? html`<details ${hasHb ? 'open' : ''}><summary class="small" style="cursor:pointer"><b>Ürün adı eşleşmeleri</b> <span class="muted">(${nameRows.length} farklı ad — kaydetmeden önce kontrol edin)</span></summary>
+          <div class="tw" style="max-height:380px;margin-top:8px"><table class="t"><thead><tr><th>Dosyadaki ürün adı</th><th>Katalog ürünü</th><th class="num">Adet</th></tr></thead><tbody>
+          ${nameRows.map((e) => html`<tr><td class="small">${e.raw}</td><td class="small">${[...e.lines.values()].map((l) => html`<div>${l.ignored ? html`<span class="muted">yoksayılır</span>` : l.productId ? html`<b>${pname(l.productId)}</b>${l.mult > 1 ? html` <span class="badge info">×${l.mult}</span>` : ''}${l.method === 'manual' ? html` <span class="badge violet">elle</span>` : ''}` : html`<span class="badge err">eşleşmedi</span>`}</div>`)}</td><td class="num">${n(e.qty)}</td></tr>`)}
+          </tbody></table></div></details>` : ''}
         ${read.log.length ? html`<details><summary class="small muted" style="cursor:pointer">Okuma günlüğü (${read.log.length})</summary><div class="stack small" style="gap:4px;margin-top:8px">${read.log.map((l) => html`<div class="${l.type === 'error' || l.type === 'warn' ? 'unm' : 'muted'}">• ${l.msg}</div>`)}</div></details>` : ''}
       </div>
       <div class="tabs">${[['all', 'Tümü', rows.length], ['new', 'Yeni', newRows.length], ['dup', 'Mükerrer', count('dup')], ['merge', 'Devam', count('merge')], ['fix', 'Düzeltilecek', count('fix')], ['error', 'Hatalı', count('error')]].filter(([k, , c]) => k === 'all' || c).map(([k, l, c]) => html`<button data-sf="${k}" class="${statusFilter === k ? 'on' : ''}">${l} <span class="muted">${c}</span></button>`)}</div>
@@ -217,8 +301,14 @@ export default async function uploadPage(ctx) {
           <td class="small">${b.files.slice(0, 3).map((f) => html`<div>${f}</div>`)}${b.files.length > 3 ? html`<div class="muted">+${b.files.length - 3} dosya</div>` : ''}</td>
           <td class="small nowrap">${b.dates.length ? rangeLabel(b.dates[0], b.dates[b.dates.length - 1]) : '—'}</td>
           <td class="num"><b>${n(b.counts.new)}</b></td><td class="num">${n(b.counts.dup)}</td><td class="num">${n(b.counts.merge)}</td><td class="num">${n(b.units)}</td>
-          <td class="num nowrap">${b.dates.length ? html`<button class="btn sm ghost" data-open="${b.dates[0]}|${b.dates[b.dates.length - 1]}">Rapor</button>` : ''}${admin && b.orderCount ? html`<button class="btn sm ghost icon danger" data-undo="${b.id}" data-n="${b.orderCount}" title="Bu yüklemeyi geri al">${icon('trash')}</button>` : ''}</td></tr>`)}
+          <td class="num nowrap">${b.dates.length ? html`<button class="btn sm ghost" data-open="${b.dates[0]}|${b.dates[b.dates.length - 1]}" data-batch="${b.id}" title="Bu yüklemenin üretim listesi">Rapor</button>` : ''}${admin && b.orderCount ? html`<button class="btn sm ghost icon danger" data-undo="${b.id}" data-n="${b.orderCount}" title="Bu yüklemeyi geri al">${icon('trash')}</button>` : ''}</td></tr>`)}
         </tbody></table></div>${admin ? bulkBar() : ''}` : emptyState('history', 'Henüz yükleme yapılmadı', ''));
+      // Rapor: yalnızca bu yüklemenin siparişleriyle üretim listesi
+      box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => {
+        const [f, t] = b.dataset.open.split('|');
+        setRange(f, t);
+        ctx.navigate('production', { batch: b.dataset.batch });
+      }));
       if (admin && batches.length) {
         wireBulk(box, hsel, [{ id: 'del', label: 'Seçili yüklemeleri sil', icon: 'trash', danger: true }], async (a, ids) => {
           const cnt = batches.filter((b) => ids.includes(b.id)).reduce((s2, b) => s2 + b.orderCount, 0);
