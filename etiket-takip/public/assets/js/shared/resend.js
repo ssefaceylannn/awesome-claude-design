@@ -126,6 +126,7 @@ function parseBlock(ls) {
   for (let i = 1; i < ls.length; i++) {
     const l = lower(ls[i]);
     if (!l.endsWith(':')) continue;
+    if (/^sipari[sş] mesaj[ıi]/.test(l)) continue; // mesaj başlığının altındaki satır alıcı adı olabilir, etiketli değer sayılmaz
     const j = valueIdx(i);
     if (j < 0) continue;
     labeled.add(j);
@@ -149,11 +150,11 @@ function parseBlock(ls) {
       if (j > 0 && /\p{L}{3,}/u.test(ls[j]) && !ls[j].endsWith(':')) o.items.push({ name: cleanProductName(ls[j]), qty: +ls[i], qtyFound: true });
     }
   }
-  // Alıcı: termin süresinden sonraki ilk ad satırı ("Trendyol Plus'lı" gibi rozetler hariç)
+  // Alıcı: termin süresinden sonraki ilk ad satırı ("Trendyol Plus'lı" gibi rozetler ve "Sipariş Mesajı" başlığı hariç)
   const firstItem = imgLines.length ? imgLines[0] : ls.length;
   for (let i = afterTermin >= 0 ? afterTermin + 1 : 1; i < firstItem; i++) {
     const l = ls[i];
-    if (!l || labeled.has(i) || l.endsWith(':') || /^\d/.test(l) || /trendyol|plus|kargo|iade/i.test(l) || !/\p{L}{2,}/u.test(l)) continue;
+    if (!l || labeled.has(i) || l.endsWith(':') || /^\d/.test(l) || /trendyol|plus|kargo|iade/i.test(l) || /^sipari[sş] mesaj[ıi]/.test(lower(l)) || !/\p{L}{2,}/u.test(l)) continue;
     o.recipient = l.slice(0, 120);
     break;
   }
