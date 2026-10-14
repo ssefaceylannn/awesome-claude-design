@@ -439,6 +439,26 @@ await test('Etiket: adet hücrede üste / ortaya / alta hizalı, uzun ad alt sat
     [{ qty: 2, name: 'Coconut Mix' }, { qty: 1, name: 'Momordica Daily Shake Ananaslı 250 gr' }, { qty: 1, name: 'Ginger Shot' }]);
 });
 
+await test('Etiket: üst başlığı basılmamış ikas/PTT etiketi ayrı sipariş sayılır (devam sanılmaz), "!!!" ad dışında', async () => {
+  const { parsePage, combinePages } = await import('../public/assets/js/shared/parser.js');
+  const H = 283;
+  const t = (str, x, y, size = 10) => ({ str, transform: [size, 0, 0, size, x, H - y] });
+  // Normal: üstte "ikas" + numara
+  const normal = [t('i̇kas', 11, 26, 12), t('2755060000001', 172, 35, 7), t('Gönderici', 16, 51, 7), t('Ultranatura İkas', 67, 51, 7), t('Alıcı', 16, 69, 7), t('Örnek Bir', 67, 69),
+    t('Adres', 16, 88, 7), t('Merkez, Muğla', 67, 88), t('PTT KARGO', 16, 170, 9), t('2755060000001', 109, 190, 9), t('1x', 19, 217, 12), t('ERK Sirkesi - 500ml', 45, 217)];
+  // Başlıksız şablon: aynı alanlar, üst kısım yok
+  const headless = [t('Gönderici', 16, 23, 7), t('Ultranatura İkas', 67, 23, 7), t('Alıcı', 16, 41, 7), t('Örnek İki', 67, 41), t('Adres', 16, 60, 7), t('Konak, İzmir', 67, 60),
+    t('PTT KARGO', 16, 131, 9), t('2755060000002', 109, 151, 9), t('3x', 19, 177, 12), t('Detox Kahve', 45, 177), t('!!!', 120, 276, 14)];
+  const cont = [t('(devam) 218868', 11, 20, 9), t('1x', 19, 44, 12), t('Enginar Sirkesi - 500 ml', 45, 44), t('!!!', 120, 276, 14)];
+  const pages = [normal, cont, headless].map((p, i) => Object.assign(parsePage(p, H), { file: 'x.pdf', filePage: i + 1 }));
+  assert.equal(pages[2].orderNo, '2755060000002');
+  const { orders } = combinePages(pages);
+  assert.deepEqual(orders.map((o) => [o.orderNo, o.items.map((it) => `${it.qty}x ${it.name}`)]), [
+    ['2755060000001', ['1x ERK Sirkesi - 500ml', '1x Enginar Sirkesi - 500 ml']],
+    ['2755060000002', ['3x Detox Kahve']],
+  ]);
+});
+
 await test('Excel ürün hücresi ayrıştırma', async () => {
   const { parseItems } = await import('../public/assets/js/core/sheets.js');
   assert.deepEqual(parseItems('Okyanus Oda Kokusu OK, one size x1, Lavanta Oda Kokusu LK, one size x2', 3), [

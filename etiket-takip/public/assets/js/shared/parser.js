@@ -151,7 +151,8 @@ function parseItems(rows, lastMetaRow, iFirstQty, warnings) {
   lines.sort((a, b) => a.y - b.y);
 
   if (lines.length >= qtys.length) {
-    for (const [q, group] of assignBlocks(qtys, lines)) q.name = clean(group.map((l) => l.text).join(' '));
+    // Etiketin altındaki "!!!" işareti son ürün adına karışmasın
+    for (const [q, group] of assignBlocks(qtys, lines)) q.name = clean(group.map((l) => l.text).join(' ')).replace(/\s*!{2,}\s*$/, '');
   } else {
     for (const l of lines) {
       let best = l.sameRowQty;
@@ -236,6 +237,12 @@ export function parsePage(pdfItems, pageHeight) {
   }
 
   if (iFirstQty >= 0) res.items = parseItems(rows, lastMetaRow, iFirstQty, res.warnings);
+
+  // --- Başlıksız etiket (üst kısım basılmamış şablon, ör. bazı ikas PTT etiketleri) ---
+  // Sipariş no başlıkta yok ama Gönderici satırı ve kargo barkodu var: barkod sipariş no sayılır.
+  // Normal etiketlerde üstteki numara bu barkodla aynıdır; mükerrer kontrolü tutarlı kalır.
+  // Bunu yapmazsak numarasız sayfa "devam etiketi" sanılıp önceki siparişe eklenir (sipariş kaybolur).
+  if (!res.orderNo && iGon >= 0 && /^\d{10,}$/.test(res.cargoCode)) res.orderNo = res.cargoCode;
 
   // --- Devam işaretleri ---
   if (CONT_RE.test(allLow)) {
