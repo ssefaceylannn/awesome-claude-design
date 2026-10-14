@@ -118,6 +118,20 @@ await test('Hepsiburada CSV: paket = sipariş, satır başına kalem, adet sütu
   assert.equal(computeOrder({ k: 't', sender: 'Momordica Trendyol', items: [{ name, qty: 1 }] }, cx).lines.length, 2);
 });
 
+await test('Etiket tasarımı: varsayılan düzen her kâğıt boyutunda kâğıdın içinde, alanlar üst üste binmez', async () => {
+  const { defaultLayout, ELEMENTS } = await import('../public/assets/js/core/labeldesign.js');
+  for (const [W, H] of [[100, 150], [100, 100], [210, 297], [297, 210], [80, 50], [60, 40], [150, 100]]) {
+    const L = defaultLayout(W, H);
+    for (const { key } of ELEMENTS) {
+      const e = L[key];
+      assert.ok(e.x >= 0 && e.y >= 0 && e.x + e.w <= W + 0.01 && e.y + e.h <= H + 0.01, `${W}x${H} ${key} kâğıt dışında: ${JSON.stringify(e)}`);
+      assert.ok(e.w > 0 && e.h > 0, `${W}x${H} ${key} boyutsuz`);
+    }
+    assert.ok(L.name.y + L.name.h <= L.items.y && L.items.y + L.items.h <= L.barcode.y && L.barcode.y + L.barcode.h <= L.code.y + 0.6, `${W}x${H} sıra bozuk`);
+    assert.ok(L.store.x + L.store.w <= L.company.x, `${W}x${H} mağaza/firma çakışıyor`);
+  }
+});
+
 await test('Metin sadeleştirme ve birimler', () => {
   assert.equal(fold("ULTRA NATURA Detoks Shot 7'li"), 'ultra natura detoks shot 7li');
   assert.equal(fold('Sultan Sirkesi 1 Lt'), 'sultan sirkesi 1000ml');

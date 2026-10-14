@@ -1,13 +1,14 @@
 // Kombinasyon analizi: yüklenen siparişlerde aynı ürün + adet bileşimleri (≥ eşik ayrı satır,
 // kalanlar "Karma Siparişler"). Mağaza, tarih, yükleme ve yükleme saati ile süzülür.
 // İkinci sekme: Trendyol "Gönderime Hazır" sayfasından kopyalanan grup metnini okur.
-import { html, mount, icon, n, toast, busy, emptyState, rangeLabel, multiSelect, trDateTime, personName, modal } from '../core/ui.js';
+import { html, raw, mount, icon, n, toast, busy, emptyState, rangeLabel, multiSelect, trDateTime, personName, modal } from '../core/ui.js';
 import { api, state, fetchOrders, getRange } from '../core/api.js';
 import { fold } from '../shared/text.js';
 import { computeOrder } from '../shared/calc.js';
 import { analyzeCombos, parseComboPaste, KARMA } from '../shared/combos.js';
 import { rangePicker, storeFilters, filterLabel } from '../core/widgets.js';
 import { exportTable } from '../core/excel.js';
+import { paperById, paperPicker } from '../core/paper.js';
 
 const PREF = 'et-combos';
 const loadPref = () => { try { return JSON.parse(localStorage.getItem(PREF) || '{}'); } catch { return {}; } };
@@ -249,10 +250,12 @@ export default async function combosPage(ctx) {
     const p = raw || {};
     return {
       cols: Array.isArray(p.cols) && p.cols.length ? PCOLS.map(([k]) => k).filter((k) => p.cols.includes(k)) : ['products', 'orders', 'units'],
-      orient: p.orient === 'landscape' ? 'landscape' : 'portrait',
-      fs: Math.min(20, Math.max(9, +p.fs || 13)),
+      // Önceki sürümün dikey/yatay seçimi A4 kâğıt boyutuna çevrilir
+      paper: paperById(p.paper || (p.orient === 'landscape' ? 'a4l' : 'a4p')).id,
+      pw: +p.pw >= 20 && +p.pw <= 92 ? +p.pw : null, // ürün sütunu genişliği (%), önizlemede sürüklenir
+      fs: Math.min(24, Math.max(6, +p.fs || 13)),
       pad: PADS[p.pad] ? p.pad : 'm',
-      margin: Math.min(25, Math.max(5, +p.margin || 12)),
+      margin: Math.min(25, Math.max(0, p.margin == null ? 12 : +p.margin)),
       newPage: !!p.newPage,
       title: p.title !== false,
       saved: !!raw,
@@ -271,14 +274,15 @@ export default async function combosPage(ctx) {
       .map(([, v]) => ({ name: v.name, R: analyzeCombos(v.list, state.ctx, { min, includeRewards }) })).filter((x) => x.R.orders);
   }
   /** Çıktı içeriği: yalnızca seçilen sütunlar (kaldırılan sütunun başlığı da hücreleri de yok) */
-  function printHtml(p) {
+  function printHtml(p, { preview = false } = {}) {
     const has = (k) => p.cols.includes(k);
     const nums = p.cols.filter((k) => k !== 'products').length;
+    const pw = has('products') && nums ? (p.pw || (nums === 1 ? 75 : 62)) : null;
     const row = (label, orders, units, karma) => html`<tr class="${karma ? 'karma' : ''}">${has('products') ? html`<td class="p">${label}</td>` : ''}${has('orders') ? html`<td class="num">${n(orders)}</td>` : ''}${has('units') ? html`<td class="num">${n(units)}</td>` : ''}</tr>`;
-    const head = html`<tr>${has('products') ? html`<th class="p">Ürünler</th>` : ''}${has('orders') ? html`<th class="num">Sipariş adedi</th>` : ''}${has('units') ? html`<th class="num">Ürün adedi</th>` : ''}</tr>`;
+    const head = html`<tr>${has('products') ? html`<th class="p" ${pw ? raw(`style="width:${pw}%"`) : ''}>Ürünler${preview && pw ? html`<span class="cw" data-cw title="Sürükleyerek sütun genişliğini ayarlayın"></span>` : ''}</th>` : ''}${has('orders') ? html`<th class="num">Sipariş adedi</th>` : ''}${has('units') ? html`<th class="num">Ürün adedi</th>` : ''}</tr>`;
     const scope = [rangeLabel(from, to), batchIds.length || tFrom || tTo ? 'seçili yüklemeler' + (tFrom || tTo ? ` ${tFrom || '…'}–${tTo || '…'}` : '') : ''].filter(Boolean).join(' · ');
     const style = `--fs:${p.fs}pt;--pad:${PADS[p.pad][1]}px`;
-    return html`<div class="cprint ${has('products') ? '' : 'nop'} cols-${nums}" style="${style}">
+    return html`<div class="cprint ${has('products') ? '' : 'nop'} ${pw ? 'pw' : ''} cols-${nums}" style="${style}">
       ${p.title ? html`<h1>Kombinasyon Listesi</h1><p class="sub">${scope} · ${min} siparişten az olan bileşimler “${KARMA}” satırında</p>` : ''}
       ${printSections().map((sc, i) => html`<section class="${p.newPage && i ? 'newpage' : ''}"><h2>${sc.name} <small>${n(sc.R.orders)} sipariş</small></h2><table><thead>${head}</thead><tbody>
         ${sc.R.groups.map((g) => row(g.label, g.orders, g.units * g.orders))}
@@ -290,9 +294,12 @@ export default async function combosPage(ctx) {
     if (!computedAll.length) { toast('Önizleme için sipariş yok; tarih ya da mağaza seçimini değiştirin', 'err'); return false; }
     let p = printPref();
     let ok = false;
+    let paperId = p.paper;
+    let pw = p.pw;
     const read = (d) => ({
       cols: [...d.querySelectorAll('[name=col]:checked')].map((x) => x.value),
-      orient: d.querySelector('[name=orient]').value,
+      paper: paperId,
+      pw,
       fs: +d.querySelector('[name=fs]').value,
       pad: d.querySelector('[name=pad]').value,
       margin: +d.querySelector('[name=margin]').value,
@@ -305,28 +312,50 @@ export default async function combosPage(ctx) {
       body: html`<div class="print-setup">
         <div class="stack" style="gap:14px">
           <div class="f">Sütunlar<div class="row wrap" style="gap:14px;margin-top:6px">${PCOLS.map(([k, l]) => html`<label class="check"><input type="checkbox" name="col" value="${k}" ${p.cols.includes(k) ? 'checked' : ''}> ${l}</label>`)}</div></div>
-          <label class="f">Sayfa yönü<select class="input" name="orient"><option value="portrait" ${p.orient === 'portrait' ? 'selected' : ''}>Dikey (A4)</option><option value="landscape" ${p.orient === 'landscape' ? 'selected' : ''}>Yatay (A4)</option></select></label>
-          <label class="f">Yazı boyutu <span class="hint" id="fsV">${p.fs} punto</span><input type="range" name="fs" min="9" max="20" step="1" value="${p.fs}"></label>
+          <div class="f">Kâğıt boyutu <span class="hint">A4, etiket ya da kendi eklediğiniz ölçü</span><div id="pPaper"></div></div>
+          <label class="f">Yazı boyutu <span class="hint" id="fsV">${p.fs} punto</span><input type="range" name="fs" min="6" max="24" step="0.5" value="${p.fs}"></label>
           <label class="f">Satır aralığı<select class="input" name="pad">${Object.entries(PADS).map(([k, [l]]) => html`<option value="${k}" ${p.pad === k ? 'selected' : ''}>${l}</option>`)}</select></label>
-          <label class="f">Kenar boşluğu <span class="hint" id="mgV">${p.margin} mm</span><input type="range" name="margin" min="5" max="25" step="1" value="${p.margin}"></label>
+          <label class="f">Kenar boşluğu <span class="hint" id="mgV">${p.margin} mm</span><input type="range" name="margin" min="0" max="25" step="1" value="${p.margin}"></label>
+          <button type="button" class="btn sm ghost" id="pwReset">Sütun genişliğini sıfırla</button>
           <label class="check"><input type="checkbox" name="title" ${p.title ? 'checked' : ''}> Başlık ve tarih satırı</label>
           <label class="check"><input type="checkbox" name="newPage" ${p.newPage ? 'checked' : ''}> Her mağaza yeni sayfada başlasın</label>
-          <p class="muted small">Sütunlar her zaman sayfa genişliğine sığar; uzun ürün adları alt satıra geçer, satırlar gerekirse sonraki sayfaya devam eder. Mağaza seçimi sayfanın üstündeki kutudan alınır. Ayarlar hatırlanır.</p>
+          <p class="muted small">Sütunlar her zaman kâğıt genişliğine sığar; ürün sütununun genişliğini önizlemede başlığın sağ kenarını tutup sürükleyerek ayarlayın. Uzun ürün adları alt satıra geçer, satırlar gerekirse sonraki sayfaya devam eder. Mağaza seçimi sayfanın üstündeki kutudan alınır. Ayarlar hatırlanır.</p>
         </div>
-        <div><div class="muted small" style="margin-bottom:6px">Önizleme · 1. sayfa</div><div class="sheet-wrap" id="pv"></div></div>
+        <div><div class="muted small" style="margin-bottom:6px" id="pvInfo">Önizleme · 1. sayfa</div><div class="sheet-wrap" id="pv"></div></div>
       </div>`,
       actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Kaydet', value: 'save' }, { label: 'Kaydet ve yazdır', value: 'ok', variant: 'primary', icon: 'printer' }],
       onOpen: (d) => {
+        const pv = d.querySelector('#pv');
         const draw = () => {
           const q = read(d);
+          const pp = paperById(q.paper);
           d.querySelector('#fsV').textContent = `${q.fs} punto`;
           d.querySelector('#mgV').textContent = `${q.margin} mm`;
           const show = { ...q, cols: q.cols.length ? q.cols : ['products'] };
-          mount(d.querySelector('#pv'), html`<div class="sheet ${q.orient}" style="padding:${q.margin}mm">${printHtml(show)}</div>`);
+          const px = 96 / 25.4;
+          const zoom = Math.min(0.75, Math.max(0.2, (pv.clientWidth - 28) / (pp.w * px)), 620 / (pp.h * px));
+          d.querySelector('#pvInfo').textContent = `Önizleme · 1. sayfa · ${pp.w} × ${pp.h} mm`;
+          mount(pv, html`<div class="sheet" style="width:${pp.w}mm;height:${pp.h}mm;padding:${q.margin}mm;zoom:${zoom}">${printHtml(show, { preview: true })}</div>`);
         };
-        d.addEventListener('input', draw);
-        d.addEventListener('change', draw);
-        draw();
+        paperPicker(d.querySelector('#pPaper'), { selected: paperId, onChange: (np) => { paperId = np.id; draw(); } });
+        d.querySelector('#pwReset').addEventListener('click', () => { pw = null; draw(); });
+        // Ürün sütununun sağ kenarını sürükle → genişlik (%)
+        pv.addEventListener('pointerdown', (ev) => {
+          if (!ev.target.closest('[data-cw]')) return;
+          ev.preventDefault();
+          const table = ev.target.closest('table');
+          const move = (mv) => {
+            const r = table.getBoundingClientRect();
+            pw = Math.round(Math.max(20, Math.min(92, ((mv.clientX - r.left) / r.width) * 100)));
+            pv.querySelectorAll('.cprint th.p').forEach((th) => { th.style.width = pw + '%'; });
+          };
+          const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); draw(); };
+          window.addEventListener('pointermove', move);
+          window.addEventListener('pointerup', up);
+        });
+        d.addEventListener('input', (ev) => { if (!ev.target.closest('#pPaper')) draw(); });
+        d.addEventListener('change', (ev) => { if (!ev.target.closest('#pPaper')) draw(); });
+        requestAnimationFrame(draw);
       },
       onSubmit: (v, d) => {
         const q = read(d);
@@ -342,7 +371,8 @@ export default async function combosPage(ctx) {
     if (!computedAll.length) return toast('Yazdırılacak sipariş yok', 'err');
     const p = printPref();
     const box = document.getElementById('print');
-    mount(box, html`<style>@page { size: A4 ${p.orient}; margin: ${p.margin}mm }</style>${printHtml(p)}`);
+    const pp = paperById(p.paper);
+    mount(box, html`<style>@page { size: ${pp.w}mm ${pp.h}mm; margin: ${p.margin}mm }</style>${printHtml(p)}`);
     // Çıktı sayfada kalmasın: sonra tarayıcıdan (Ctrl+P) basılırsa eski ayarlı liste çıkmasın
     window.addEventListener('afterprint', () => { box.innerHTML = ''; }, { once: true });
     window.print();

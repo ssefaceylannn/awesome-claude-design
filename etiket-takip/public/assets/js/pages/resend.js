@@ -5,32 +5,21 @@ import { html, raw, mount, personName, icon, n, trDate, toast, today, addDays, c
 import { api, state, isAdmin, fetchOrders, invalidateOrders } from '../core/api.js';
 import { computeOrder } from '../shared/calc.js';
 import { parseResendText, parseOrderList, detectStore, companyFor } from '../shared/resend.js';
-import { barcodeSvg } from '../shared/barcode.js';
+import { paperById, paperPicker } from '../core/paper.js';
+import { renderLabel, fitLabels, openDesigner } from '../core/labeldesign.js';
 
-const SIZES = [{ id: '150', label: '100 × 150 mm', css: '100mm 150mm' }, { id: '100', label: '100 × 100 mm', css: '100mm 100mm' }];
 const PREF = 'et-resend';
 const loadPref = () => { try { return JSON.parse(localStorage.getItem(PREF) || '{}'); } catch { return {}; } };
 const savePref = (p) => { try { localStorage.setItem(PREF, JSON.stringify(p)); } catch { /* yok */ } };
 
-/** Tek etiket (ekranda önizleme ve yazdırma için aynı işaretleme) */
-export function labelHtml(o, store, size) {
-  let bc = '';
-  if (o.code) {
-    try { bc = html`<div class="pl-bc">${raw(barcodeSvg(o.code))}<div class="pl-code">${o.code}</div></div>`; } catch { bc = html`<div class="pl-bc pl-miss">Barkod oluşturulamadı: ${o.code}</div>`; }
-  } else bc = html`<div class="pl-bc pl-miss">Kargo kodu (734…) bulunamadı</div>`;
-  const company = companyFor(store);
-  return html`<div class="plabel sz-${size}">
-    <div class="pl-head"><div class="pl-name">${personName(o.recipient) || '—'}</div><div class="pl-no">${o.orderNo ? '#' + o.orderNo : ''}</div></div>
-    <div class="pl-store"><span class="pl-sname">${store ? store.name : 'Mağaza seçilmedi'}</span>${company ? html`<span class="pl-comp">${company}</span>` : ''}</div>
-    <div class="pl-items">${o.items.map((it) => html`<div class="pl-item"><b>${it.qty} ×</b> <span>${it.name}</span></div>`)}</div>
-    ${bc}
-  </div>`;
-}
+// Önceki sürümdeki "150"/"100" seçimi yeni kâğıt kimliklerine
+const OLD_SIZE = { 150: 'l100x150', 100: 'l100x100' };
 
 export default async function resendPage(ctx) {
   const stores = state.config.stores.filter((s) => s.active !== false);
   const pname = (id) => state.ctx.label(id);
   const pref = loadPref();
+  let paper = paperById(OLD_SIZE[pref.size] || pref.size || 'l100x150', 'l100x150');
   let orders = []; // { orderNo, recipient, code, items:[{name, qty, productId?}], on }
 
   ctx.setSub('Barkodlu gönderim etiketi — isteğe bağlı olarak üretim listesine eklenir');
@@ -40,7 +29,7 @@ export default async function resendPage(ctx) {
         <textarea class="input" id="txt" rows="8" placeholder="#11613864400&#10;Sipariş Tarihi: …&#10;Ad Soyad&#10;2&#10;Ürün adı-image&#10;…&#10;7340037450818569"></textarea>
         <div class="resend-opts">
           <label class="f">Mağaza<select class="input" id="store"><option value="">Mağaza seçin…</option>${stores.map((s) => html`<option value="${s.id}" ${s.id === pref.store ? 'selected' : ''}>${s.name}${companyFor(s) ? ` — ${companyFor(s)}` : ''}</option>`)}</select></label>
-          <label class="f">Etiket boyutu<select class="input" id="size">${SIZES.map((z) => html`<option value="${z.id}" ${z.id === (pref.size || '150') ? 'selected' : ''}>${z.label}</option>`)}</select></label>
+          <div class="f">Etiket kâğıdı<div id="paper"></div></div>
           <label class="f">Gönderim tarihi<input class="input" type="date" id="date" value="${today()}"></label>
           <label class="f">Not <span class="hint">isteğe bağlı</span><input class="input" id="note" maxlength="300" placeholder="Örn. kargoda kırılmış"></label>
         </div>
@@ -48,6 +37,7 @@ export default async function resendPage(ctx) {
           <label class="check"><input type="checkbox" id="saveToo" ${pref.saveToo === false ? '' : 'checked'}> Üretim listesine de ekle</label>
           <span class="spacer"></span>
           <button class="btn ghost" id="clear">Temizle</button>
+          <button class="btn" id="design">${icon('edit')}Etiket tasarımı</button>
           <button class="btn primary" id="labelPrint">${icon('printer')}<span id="printLbl">Etiketleri yazdır</span></button>
         </div>
       </div></div>
@@ -56,7 +46,9 @@ export default async function resendPage(ctx) {
   </div>`);
   const $ = (s) => ctx.el.querySelector(s);
   const store = () => stores.find((s) => s.id === $('#store').value) || null;
-  const size = () => $('#size').value;
+  // Seçilen kâğıt, değiştirilene kadar hatırlanır
+  const picker = paperPicker($('#paper'), { selected: paper.id, onChange: (p) => { paper = p; savePref({ ...loadPref(), size: p.id }); draw(); } });
+  const zoomFor = (p) => Math.min(0.72, 260 / (p.w * 96 / 25.4));
 
   // Tek sipariş detayı (liste biçimi değilse): ürünler katalogla eşleştirilir
   const matchLine = (line) => {
@@ -94,8 +86,9 @@ export default async function resendPage(ctx) {
           <div class="row" style="gap:8px;margin-bottom:8px"><label class="check"><input type="checkbox" data-on="${i}" ${o.on ? 'checked' : ''}> Yazdır</label><span class="spacer"></span>
             ${!o.code ? html`<span class="badge err">Barkod yok</span>` : ''}${!o.items.length ? html`<span class="badge err">Ürün yok</span>` : unm ? html`<span class="badge warn" title="Üretim listesinde eşleşmeyen ürün olarak görünür; Ürün Eşleştirme'den atayın">${unm} ürün eşleşmedi</span>` : html`<span class="badge ok">${icon('check')} Ürünler eşleşti</span>`}
             <button class="btn sm ghost icon" data-edit="${i}" title="Düzenle">${icon('edit')}</button></div>
-          <div class="label-zoom">${labelHtml(o, st, size())}</div></div>`;
+          <div class="label-zoom" style="zoom:${zoomFor(paper)}">${renderLabel(o, st, paper)}</div></div>`;
       })}</div></div></div>`);
+    fitLabels($('#preview'));
   }
 
   async function editOrder(i) {
@@ -128,7 +121,11 @@ export default async function resendPage(ctx) {
   let t;
   $('#txt').addEventListener('input', () => { clearTimeout(t); t = setTimeout(parse, 200); });
   $('#store').addEventListener('change', () => { savePref({ ...loadPref(), store: $('#store').value }); parse(); });
-  $('#size').addEventListener('change', () => { savePref({ ...loadPref(), size: size() }); draw(); });
+  $('#design').addEventListener('click', async () => {
+    const sample = orders.find((o) => o.on) || null;
+    await openDesigner({ paperId: paper.id, sample, store: store(), onSave: (p) => { paper = p; savePref({ ...loadPref(), size: p.id }); picker.set(p.id); } });
+    draw();
+  });
   $('#saveToo').addEventListener('change', () => savePref({ ...loadPref(), saveToo: $('#saveToo').checked }));
   $('#preview').addEventListener('change', (e) => { if (e.target.dataset.on) { orders[+e.target.dataset.on].on = e.target.checked; draw(); } });
   $('#preview').addEventListener('click', (e) => { const b = e.target.closest('[data-edit]'); if (b) editOrder(+b.dataset.edit); });
@@ -160,8 +157,10 @@ export default async function resendPage(ctx) {
       } catch (err) { busy(btn, false); return toast(err.message, 'err'); }
       busy(btn, false);
     }
-    const z = SIZES.find((x) => x.id === size()) || SIZES[0];
-    mount(document.getElementById('print'), html`<style>@page { size: ${z.css}; margin: 0 }</style><div class="plabels">${on.map((o) => labelHtml(o, st, z.id))}</div>`);
+    const box = document.getElementById('print');
+    mount(box, html`<style>@page { size: ${paper.w}mm ${paper.h}mm; margin: 0 }</style><div class="plabels">${on.map((o) => renderLabel(o, st, paper))}</div>`);
+    fitLabels(box); // sığmayan ürün listesi/isim kendi alanına sığacak kadar küçülür
+    window.addEventListener('afterprint', () => { box.innerHTML = ''; }, { once: true });
     window.print();
   });
 

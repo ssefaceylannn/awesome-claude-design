@@ -664,48 +664,58 @@ a { color: var(--brand); }
 [id*="netlify" i]:not(#app *), [class*="netlify" i]:not(#app *), iframe[src*="netlify" i], netlify-drawer, netlify-deploy-preview { display: none !important; }
 
 /* ---------------------------------------------------------------- yeniden gönderim etiketi
-   Kâğıt etiket: tema ne olursa olsun beyaz zemin, siyah yazı. Ölçüler mm (termal yazıcı). */
+   Kâğıt etiket: tema ne olursa olsun beyaz zemin, siyah yazı. Her alan mm cinsinden konumlanır
+   (Etiket tasarımı penceresinden; düzen her kâğıt boyutu için ayrı saklanır). */
 .resend-opts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 14px; }
 @media (max-width: 900px) { .resend-opts { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 520px) { .resend-opts { grid-template-columns: 1fr; } }
-.label-grid { display: flex; flex-wrap: wrap; gap: 20px; }
-.label-cell { width: calc(100mm * .72 + 2px); }
+.label-grid { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.label-cell { width: max-content; max-width: 100%; }
 .label-cell.off .label-zoom { opacity: .35; }
-.label-zoom { zoom: .72; border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px var(--border-strong), var(--shadow); width: max-content; }
-.plabel {
-  width: 100mm; height: 150mm; box-sizing: border-box; padding: 6mm 6mm 18mm; background: #fff; color: #000;
-  display: flex; flex-direction: column; overflow: hidden; font-family: "Inter", Arial, Helvetica, sans-serif; line-height: 1.2;
-}
-.plabel.sz-100 { height: 100mm; padding: 5mm 5mm 9mm; }
-.pl-head { border-bottom: .6mm solid #000; padding-bottom: 2.5mm; }
-.pl-name { font-size: 6.4mm; font-weight: 800; letter-spacing: -.01em; overflow-wrap: anywhere; }
-.pl-no { font-size: 4.4mm; font-weight: 600; margin-top: 1mm; font-variant-numeric: tabular-nums; }
-.pl-store { display: flex; align-items: center; justify-content: space-between; gap: 3mm; margin-top: 2.5mm; font-size: 3.8mm; }
-.pl-sname { font-weight: 600; }
-.pl-comp { font-weight: 800; border: .45mm solid #000; border-radius: 1.2mm; padding: .6mm 2mm; white-space: nowrap; letter-spacing: .02em; }
-.pl-items { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 2.4mm; padding: 3mm 0; min-height: 0; }
-.pl-item { font-size: 5.6mm; font-weight: 600; line-height: 1.22; overflow-wrap: anywhere; }
-.pl-item b { font-weight: 900; margin-right: 1mm; }
-.pl-bc { text-align: center; }
-.pl-bc svg.bc { display: block; width: 100%; height: 22mm; }
-.pl-code { font-size: 4mm; font-weight: 700; letter-spacing: .12em; margin-top: 1.2mm; font-variant-numeric: tabular-nums; }
-.pl-miss { border: .5mm dashed #000; padding: 4mm; font-size: 3.6mm; font-weight: 700; }
-.plabel.sz-100 .pl-name { font-size: 5.2mm; }
-.plabel.sz-100 .pl-no { font-size: 3.8mm; }
-.plabel.sz-100 .pl-store { font-size: 3.3mm; margin-top: 1.8mm; }
-.plabel.sz-100 .pl-item { font-size: 4.4mm; }
-.plabel.sz-100 .pl-items { gap: 1.6mm; padding: 2mm 0; }
-.plabel.sz-100 .pl-bc svg.bc { height: 16mm; }
-.plabel.sz-100 .pl-code { font-size: 3.4mm; }
+.label-zoom { border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px var(--border-strong), var(--shadow); width: max-content; }
+.plabel { -webkit-print-color-adjust: exact; print-color-adjust: exact; position: relative; box-sizing: border-box; background: #fff; color: #000; overflow: hidden; font-family: "Inter", Arial, Helvetica, sans-serif; line-height: 1.2; }
+.pe { position: absolute; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; justify-content: center; }
+.pe-in { width: 100%; overflow-wrap: anywhere; }
+.pe-name .pe-in, .pe-orderNo .pe-in, .pe-store .pe-in, .pe-company .pe-in, .pe-code .pe-in { white-space: nowrap; overflow: hidden; text-overflow: clip; }
+.pe-orderNo { font-variant-numeric: tabular-nums; }
+.pe-line { min-height: .3mm; } /* çizgi kenarlıkla çizilir: arka plan rengi yazıcıda basılmayabilir */
+.pe-company.boxed { border: .45mm solid #000; border-radius: 1.2mm; padding: 0 1.5mm; }
+.pe-items .pe-in { display: flex; flex-direction: column; gap: .3em; }
+.pe-items .pl-item b { font-weight: 900; margin-right: .2em; }
+.pe-barcode .pe-in { height: 100%; display: flex; align-items: center; justify-content: center; }
+.pe-barcode svg.bc { display: block; width: 100%; height: 100%; }
+.pe-code { letter-spacing: .12em; font-variant-numeric: tabular-nums; }
+.pl-miss { display: block; border: .5mm dashed #000; padding: 2mm; font-size: 9pt; font-weight: 700; text-align: center; }
 @media print {
   #print .plabels { display: block; }
-  #print .plabel { break-after: page; page-break-after: always; font-family: "Inter", Arial, Helvetica, sans-serif; }
+  #print .plabel { break-after: page; page-break-after: always; }
   #print .plabel:last-child { break-after: auto; page-break-after: auto; }
 }
+/* Etiket tasarımı penceresi */
+.ld { display: grid; grid-template-columns: minmax(250px, 300px) minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 780px) { .ld { grid-template-columns: 1fr; } }
+.ld-list { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.ld-item { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border); cursor: pointer; font-size: .82rem; background: var(--surface); }
+.ld-item.on { border-color: var(--honey-2); background: var(--brand-50); font-weight: 650; }
+.ld-item input { accent-color: var(--honey-2); }
+.ld-props { padding: 10px 12px; }
+.ld-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; align-items: end; }
+.ld-stage { background: var(--surface-3); border-radius: 12px; padding: 14px; overflow: auto; max-height: 64vh; min-height: 240px; display: flex; justify-content: center; align-items: flex-start; }
+.ld-canvas { box-shadow: 0 2px 10px rgba(0, 0, 0, .18); }
+.ld-canvas .pe { cursor: move; outline: 1px dashed rgba(0, 0, 0, .25); touch-action: none; user-select: none; }
+.ld-canvas .pe.sel { outline: 1.5px solid #e0960f; z-index: 2; }
+.ld-canvas .pe.hidden-el { opacity: .25; }
+.ld-canvas .pe-tag { position: absolute; left: 0; top: 0; font: 600 7pt/1 Inter, Arial, sans-serif; background: rgba(224, 150, 15, .9); color: #000; padding: 1px 3px; border-radius: 0 0 3px 0; pointer-events: none; opacity: 0; }
+.ld-canvas .pe:hover .pe-tag, .ld-canvas .pe.sel .pe-tag { opacity: 1; }
+.ld-canvas .pe-rz { position: absolute; right: 0; bottom: 0; width: 9px; height: 9px; background: #e0960f; cursor: nwse-resize; border-radius: 2px 0 0 0; }
+/* Kâğıt boyutu seçici */
+.paper-add { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.paper-add .input { width: 110px; flex: 1 1 90px; }
+
 
 /* kombinasyon listesi çıktısı — önizleme ve kâğıt aynı kurallarla (A4, sütunlar sayfa genişliğine sığar).
    --fs: yazı boyutu, --pad: hücre iç boşluğu (Sayfa düzeni penceresinden) */
-.cprint { --fs: 13pt; --pad: 6px; font: var(--fs)/1.3 Arial, Helvetica, sans-serif; color: #000; }
+.cprint { -webkit-print-color-adjust: exact; print-color-adjust: exact; --fs: 13pt; --pad: 6px; font: var(--fs)/1.3 Arial, Helvetica, sans-serif; color: #000; }
 .cprint h1, .cprint h2 { font-family: Arial, Helvetica, sans-serif; letter-spacing: 0; color: #000; }
 .cprint h1 { font-size: calc(var(--fs) * 1.35); margin: 0 0 2px; font-weight: 700; }
 .cprint .sub { font-size: calc(var(--fs) * .72); color: #444; margin: 0 0 calc(var(--fs) * .6); }
@@ -721,7 +731,9 @@ a { color: var(--brand); }
 /* Sayı sütunları yazı boyutuyla orantılı genişlikte; ürün sütunu kalan genişliği alır */
 .cprint th.num, .cprint td.num { width: calc(var(--fs) * 7); text-align: center; }
 .cprint td.num { white-space: nowrap; font-weight: 700; }
-.cprint.nop th.num, .cprint.nop td.num { width: auto; }
+.cprint.nop th.num, .cprint.nop td.num, .cprint.pw th.num, .cprint.pw td.num { width: auto; } /* .pw: ürün sütunu genişliği elle ayarlı */
+.cprint th.p { position: relative; }
+.cprint .cw { position: absolute; right: -6px; top: 0; bottom: 0; width: 12px; cursor: col-resize; background: rgba(224, 150, 15, .45); border-radius: 3px; touch-action: none; z-index: 2; }
 .cprint tr { break-inside: avoid; page-break-inside: avoid; }
 .cprint thead { display: table-header-group; } /* tablo sonraki sayfaya taşarsa başlık tekrar eder */
 .cprint tr.karma td { font-weight: 700; background: #f2f2f2; }
@@ -743,6 +755,4 @@ a { color: var(--brand); }
 @media (max-width: 760px) { .print-setup { grid-template-columns: 1fr; } }
 .print-setup input[type=range] { width: 100%; accent-color: var(--honey-2); }
 .sheet-wrap { background: var(--surface-3); border-radius: 12px; padding: 14px; overflow: auto; max-height: 62vh; }
-.sheet { background: #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, .18); box-sizing: border-box; overflow: hidden; zoom: .5; }
-.sheet.portrait { width: 210mm; height: 297mm; }
-.sheet.landscape { width: 297mm; height: 210mm; }
+.sheet { background: #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, .18); box-sizing: border-box; overflow: hidden; margin: 0 auto; }
