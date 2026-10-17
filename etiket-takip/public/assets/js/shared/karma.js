@@ -1,40 +1,63 @@
-// Karma ayıklama: siparişleri seçilen kategorilere göre iki gruba ayırır.
-//   only → siparişteki ürünlerin HEPSİ seçilen kategorilerde (ör. yalnızca İçecek & Mix: "Sadece Şişe")
-//   rest → geri kalan her şey: seçilen kategorinin yanında başka kategoriden ürün olanlar,
-//          seçilen kategoriden hiç ürün olmayanlar ve ürünü tanınmayan (eşleşmemiş) siparişler
+// Karma ayıklama: siparişleri seçilen kategorilere ve/veya ürünlere göre gruplar.
+//   only → siparişteki ürünlerin HEPSİ seçimde (ör. yalnızca İçecek & Mix: "Sadece Şişe")
+//   rest → seçimdeki bir ürünün yanında seçim dışı ürün de olanlar ("Kutulu"); tanınmayan ürün
+//          içerenler ve okunamayan sayfalar da burada kalır
+//   none → seçimden hiç ürün olmayanlar ("Şişesiz") — yalnızca 3. grup açıksa; kapalıysa rest'e girer
 // Tanınmayan ürün içeren sipariş asla "only" sayılmaz: yanlışlıkla şişe grubuna düşmesin.
 import { fold } from './text.js';
 
-export const DEFAULT_KARMA = { cats: ['İçecek & Mix'], only: 'Sadece Şişe', rest: 'Kutulu', split: true };
+export const DEFAULT_KARMA = { cats: ['İçecek & Mix'], productIds: [], names: { only: 'Sadece Şişe', rest: 'Kutulu', none: 'Şişesiz' }, third: false };
 
-const catSet = (cats) => new Set((cats || []).map((c) => fold(c)).filter(Boolean));
-const catOf = (id, ctx) => { const p = ctx.productsById.get(id); return p ? fold(p.category || '') : ''; };
+/** Sunucudaki ayar (eksik alanlar varsayılanla) */
+export function karmaRule(k) {
+  const d = DEFAULT_KARMA;
+  const names = (k && k.names) || {};
+  return {
+    cats: Array.isArray(k && k.cats) ? k.cats : d.cats,
+    productIds: Array.isArray(k && k.productIds) ? k.productIds : [],
+    names: { only: names.only || d.names.only, rest: names.rest || d.names.rest, none: names.none || d.names.none },
+    third: !!(k && k.third),
+  };
+}
+
+const inSel = (rule, ctx) => {
+  const cats = new Set((rule.cats || []).map((c) => fold(c)).filter(Boolean));
+  const ids = new Set(rule.productIds || []);
+  return (id) => ids.has(id) || cats.has(fold((ctx.productsById.get(id) || {}).category || ''));
+};
+export const ruleEmpty = (rule) => !(rule.cats || []).length && !(rule.productIds || []).length;
 
 /**
- * Ürün kimliklerinden grup. Kimliği "?" ile başlayan (eşleşmemiş) parça varsa → unmatched.
+ * Ürün kimliklerinden tür. Kimliği "?" ile başlayan (eşleşmemiş) parça varsa → unmatched.
  * @returns {'only'|'mixed'|'none'|'unmatched'|'empty'}
  */
-export function kindOfIds(ids, ctx, cats) {
-  const set = catSet(cats);
+export function kindOfIds(ids, ctx, rule) {
   if (!ids.length) return 'empty';
   if (ids.some((id) => !id || String(id).startsWith('?') || !ctx.productsById.has(id))) return 'unmatched';
-  if (!set.size) return 'none';
-  const inside = ids.filter((id) => set.has(catOf(id, ctx))).length;
+  if (ruleEmpty(rule)) return 'none';
+  const has = inSel(rule, ctx);
+  const inside = ids.filter(has).length;
   return inside === ids.length ? 'only' : inside ? 'mixed' : 'none';
 }
 
-/** Bir siparişin (computeOrder sonucu) grubu. Kampanya hediyeleri etikette yazmadığı için hesaba katılmaz. */
-export function classifyOrder(c, ctx, cats) {
-  const lines = c.lines.filter((l) => !l.ignored && l.units);
-  const ids = lines.map((l) => l.productId || '?' + l.raw);
-  const kind = kindOfIds(ids, ctx, cats);
-  return { kind, group: kind === 'only' ? 'only' : 'rest' };
+/** Tür → grup (3. grup kapalıyken "none" da rest'e girer) */
+export const groupOfKind = (kind, rule) => (kind === 'only' ? 'only' : kind === 'none' && rule.third ? 'none' : 'rest');
+
+/** Bir siparişin (computeOrder sonucu) türü ve grubu. Kampanya hediyeleri etikette yazmadığı için hesaba katılmaz. */
+export function classifyOrder(c, ctx, rule) {
+  const ids = c.lines.filter((l) => !l.ignored && l.units).map((l) => l.productId || '?' + l.raw);
+  const kind = kindOfIds(ids, ctx, rule);
+  return { kind, group: groupOfKind(kind, rule) };
 }
 
+/** Ürün seçimde mi (ekranda rozet rengi için) */
+export const productInRule = (id, ctx, rule) => inSel(rule, ctx)(id);
+
+export const GROUPS = ['only', 'rest', 'none'];
 export const KIND_LABEL = {
-  only: 'Yalnızca seçilen kategori',
-  mixed: 'Seçilen kategori + başka kategori',
-  none: 'Seçilen kategoriden ürün yok',
+  only: 'Yalnızca seçilen ürünler',
+  mixed: 'Seçilen + seçim dışı ürün',
+  none: 'Seçilen üründen hiç yok',
   unmatched: 'Tanınmayan ürün var',
   empty: 'Ürün satırı okunamadı',
 };

@@ -12,6 +12,8 @@ const BUCKETS = 64;
 const bucketKey = (orderNo) => 'idx/' + String(hashStr(String(orderNo).trim()) % BUCKETS).padStart(2, '0');
 const PLATFORMS = ['trendyol', 'ikas', 'shopify', 'hepsiburada', 'n11', 'amazon', 'pazarama', 'ciceksepeti', 'diger'];
 
+// Karma Ayıklama kuralı: seçilen kategoriler/ürünler, grup adları, 3. grup (varsayılan kapalı)
+const DEFAULT_KARMA = () => ({ cats: ['İçecek & Mix'], productIds: [], names: { only: 'Sadece Şişe', rest: 'Kutulu', none: 'Şişesiz' }, third: false });
 const DEFAULT_CONFIG = () => ({
   stores: [],
   products: [],
@@ -19,6 +21,7 @@ const DEFAULT_CONFIG = () => ({
   campaignTemplates: [],
   aliases: {},
   settings: { retentionDays: 365, noiseWords: DEFAULT_NOISE, companyName: '' },
+  karma: DEFAULT_KARMA(),
   updatedAt: null,
   updatedBy: null,
 });
@@ -154,6 +157,17 @@ const SANITIZE = {
       };
     });
   },
+  karma: (k) => {
+    const d = DEFAULT_KARMA();
+    const nm = (v, def) => str(v, 40) || def;
+    const names = (k && k.names) || {};
+    return {
+      cats: Array.isArray(k && k.cats) ? [...new Set(k.cats.map((c) => str(c, 60)).filter(Boolean))].slice(0, 30) : d.cats,
+      productIds: Array.isArray(k && k.productIds) ? [...new Set(k.productIds.filter(id))].slice(0, 500) : [],
+      names: { only: nm(names.only, d.names.only), rest: nm(names.rest, d.names.rest), none: nm(names.none, d.names.none) },
+      third: !!(k && k.third),
+    };
+  },
   settings: (s) => ({
     retentionDays: int(s && s.retentionDays, 30, 3650, 365),
     noiseWords: (Array.isArray(s && s.noiseWords) ? s.noiseWords : DEFAULT_NOISE).map((w) => str(w, 40)).filter(Boolean).slice(0, 500),
@@ -180,7 +194,7 @@ async function audit(user, action, detail) {
 
 async function getConfig() {
   const c = await getJSON('config');
-  return c ? { ...DEFAULT_CONFIG(), ...c, settings: { ...DEFAULT_CONFIG().settings, ...(c.settings || {}) } } : DEFAULT_CONFIG();
+  return c ? { ...DEFAULT_CONFIG(), ...c, settings: { ...DEFAULT_CONFIG().settings, ...(c.settings || {}) }, karma: SANITIZE.karma(c.karma || DEFAULT_KARMA()) } : DEFAULT_CONFIG();
 }
 
 // IP adresi kaydedilmez, yalnızca özeti (deneme sayacı anahtarı için)
@@ -804,7 +818,7 @@ export default async (req) => {
       const b = await body(req);
       if (b.config) {
         const c = b.config;
-        const clean = { stores: SANITIZE.stores(c.stores || []), products: SANITIZE.products(c.products || []), campaigns: SANITIZE.campaigns(c.campaigns || []), campaignTemplates: SANITIZE.campaignTemplates(c.campaignTemplates || []), aliases: SANITIZE.aliases(c.aliases || {}), settings: SANITIZE.settings(c.settings || {}) };
+        const clean = { stores: SANITIZE.stores(c.stores || []), products: SANITIZE.products(c.products || []), campaigns: SANITIZE.campaigns(c.campaigns || []), campaignTemplates: SANITIZE.campaignTemplates(c.campaignTemplates || []), aliases: SANITIZE.aliases(c.aliases || {}), settings: SANITIZE.settings(c.settings || {}), ...(c.karma ? { karma: SANITIZE.karma(c.karma) } : {}) };
         await update('config', (cur) => ({ ...cur, ...clean, updatedAt: nowIso(), updatedBy: user.u }), DEFAULT_CONFIG);
       }
       if (b.labelnames && typeof b.labelnames === 'object' && !Array.isArray(b.labelnames)) {

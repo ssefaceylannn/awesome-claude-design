@@ -9,7 +9,7 @@ import { analyzeCombos, parseComboPaste, KARMA } from '../shared/combos.js';
 import { rangePicker, storeFilters, filterLabel } from '../core/widgets.js';
 import { exportTable } from '../core/excel.js';
 import { paperById, paperPicker } from '../core/paper.js';
-import { karmaPref, saveKarmaPref, karmaLabel } from '../core/karmapref.js';
+import { karmaPref, karmaLabel, karmaSplitOn, setKarmaSplit } from '../core/karmapref.js';
 
 const PREF = 'et-combos';
 const loadPref = () => { try { return JSON.parse(localStorage.getItem(PREF) || '{}'); } catch { return {}; } };
@@ -31,8 +31,9 @@ export default async function combosPage(ctx) {
   let again = 0; // seçilen yüklemelerde yeniden gelen (daha önce kaydedilmiş) sipariş sayısı
   let loadSeq = 0;
   let computedAll = []; // son hesaplanan siparişler (yazdırma mağaza mağaza buradan yapılır)
-  let kp = karmaPref(); // karma ayrımı: seçilen kategoriler ("Sadece Şişe") / geri kalanı ("Kutulu")
-  const splitOpt = () => ({ splitCats: kp.split ? kp.cats : null });
+  const kp = karmaPref(); // karma ayrımı: "Sadece Şişe" / "Kutulu" (/ "Şişesiz") — kural Karma Ayıklama sayfasında
+  let splitOn = karmaSplitOn();
+  const splitOpt = () => ({ karmaRule: splitOn ? kp : null });
   /** Karma satır(lar)ı: ayrım açıksa "Karma Siparişler – Sadece Şişe" ve "– Kutulu", değilse tek satır */
   const karmaParts = (K) => (K.split ? K.split.filter((x) => x.orders).map((x) => ({ ...x, label: karmaLabel(x.key, kp) }))
     : K.orders ? [{ key: 'all', label: KARMA, orders: K.orders, units: K.units, groups: K.groups }] : []);
@@ -51,7 +52,7 @@ export default async function combosPage(ctx) {
         <label class="f">Yükleme saati<div class="row" style="gap:6px"><input type="time" class="input sm" id="tFrom" style="width:110px"><span class="muted">–</span><input type="time" class="input sm" id="tTo" style="width:110px"></div></label>
         <label class="f">En az sipariş <span class="hint">altı karmaya</span><input type="number" class="input sm" id="min" min="1" max="999" value="${min}" style="width:90px"></label>
         <label class="check small" style="margin-bottom:6px"><input type="checkbox" id="rw" ${includeRewards ? 'checked' : ''}> Kampanya ürünlerini pakete dahil et</label>
-        <label class="check small" style="margin-bottom:6px" title="Kategoriler ve grup adları Karma Ayıklama sayfasından değiştirilir"><input type="checkbox" id="ksplit" ${kp.split ? 'checked' : ''}> Karmayı ayır: <b>${kp.only}</b> / <b>${kp.rest}</b> <a href="#/karma" class="muted">(${kp.cats.join(', ') || 'kategori seçilmedi'})</a></label>
+        <label class="check small" style="margin-bottom:6px" title="Kategoriler ve grup adları Karma Ayıklama sayfasından değiştirilir"><input type="checkbox" id="ksplit" ${splitOn ? 'checked' : ''}> Karmayı ayır: ${['only', 'rest', ...(kp.third ? ['none'] : [])].map((k, i) => html`${i ? ' / ' : ''}<b>${kp.names[k]}</b>`)} <a href="#/karma" class="muted">(kural)</a></label>
       </div></div>
       <div id="body" style="margin-top:16px"></div>
     </div>
@@ -78,7 +79,7 @@ export default async function combosPage(ctx) {
   $('#tTo').addEventListener('change', (e) => { tTo = e.target.value; pickOrders(); });
   $('#min').addEventListener('change', (e) => { min = Math.max(1, Math.min(999, parseInt(e.target.value, 10) || 10)); e.target.value = min; savePref({ min }); compute(); renderPaste(); });
   $('#rw').addEventListener('change', (e) => { includeRewards = e.target.checked; savePref({ rewards: includeRewards }); compute(); });
-  $('#ksplit').addEventListener('change', (e) => { saveKarmaPref({ split: e.target.checked }); kp = karmaPref(); compute(); });
+  $('#ksplit').addEventListener('change', (e) => { splitOn = e.target.checked; setKarmaSplit(splitOn); compute(); });
 
   // Seçili tarihlerdeki yüklemeler (saatleriyle) — yeniden çizilebilsin diye her seferinde yeni kap
   function drawBatches() {
@@ -160,7 +161,7 @@ export default async function combosPage(ctx) {
       <div class="kpis">
         <div class="kpi"><div class="l">${icon('receipt')}Sipariş</div><div class="v">${n(R.orders)}</div><div class="s">${n(R.groups.length + R.karma.groups.length)} farklı bileşim${again ? ` · ${n(again)} yeniden yüklenen dahil` : ''}</div></div>
         <div class="kpi hl"><div class="l">${icon('box')}${min}+ siparişli bileşim</div><div class="v">${n(R.groups.length)}</div><div class="s">${n(inGroups)} sipariş</div></div>
-        <div class="kpi"><div class="l">${icon('copy')}${KARMA}</div><div class="v">${n(R.karma.orders)}</div><div class="s">${R.karma.split ? R.karma.split.map((x) => `${x.key === 'only' ? kp.only : kp.rest} ${n(x.orders)}`).join(' · ') : `${n(R.karma.groups.length)} bileşim · ${n(R.karma.units)} ürün`}</div></div>
+        <div class="kpi"><div class="l">${icon('copy')}${KARMA}</div><div class="v">${n(R.karma.orders)}</div><div class="s">${R.karma.split ? R.karma.split.map((x) => `${kp.names[x.key]} ${n(x.orders)}`).join(' · ') : `${n(R.karma.groups.length)} bileşim · ${n(R.karma.units)} ürün`}</div></div>
       </div>
       ${unm ? html`<div class="callout warn">${icon('alert')}<div class="c"><b>Eşleşmeyen ürün adı içeren bileşimler var (⚠)</b><a href="#/matching">Ürün Eşleştirme</a> sayfasından atayınca analiz kendiliğinden düzelir.</div></div>` : ''}
       <div class="card"><div class="tw"><table class="t"><thead><tr><th>Kombinasyon</th><th class="num">Sipariş</th><th class="num">Toplam ürün</th></tr></thead><tbody>

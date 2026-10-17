@@ -2,6 +2,7 @@
 import { html, mount, personName, icon, toast, modal, n, trDate, trDateTime, today, confirmDialog, busy, emptyState, storeTag, rangeLabel, selTh, selTd, bulkBar, wireBulk } from '../core/ui.js';
 import { api, state, isAdmin, invalidateOrders, setRange } from '../core/api.js';
 import { readLabels } from '../core/labels.js';
+import { takeHandOff } from '../core/handoff.js';
 import { readSheets } from '../core/sheets.js';
 import { computeOrder } from '../shared/calc.js';
 import { storeForm } from './stores.js';
@@ -322,4 +323,7 @@ export default async function uploadPage(ctx) {
     } catch (e) { mount($('#history'), html`<div class="card-b unm">${e.message}</div>`); }
   }
   loadHistory();
+  // Karma Ayıklama'dan "siteye kaydet" ile gelen dosyalar: normal yükleme gibi işlenir (mükerrer kontrolü dahil)
+  const handed = takeHandOff();
+  if (handed && handed.length) handle(handed);
 }
