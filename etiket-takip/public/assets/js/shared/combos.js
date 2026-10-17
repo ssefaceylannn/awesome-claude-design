@@ -2,6 +2,7 @@
 // En az `min` siparişi olan bileşimler ayrı satırda, kalanlar "Karma Siparişler" altında toplanır.
 // Ayrıca Trendyol "Gönderime Hazır" sayfasından kopyalanan grup metnini okur.
 import { fold } from './text.js';
+import { kindOfIds } from './karma.js';
 
 export const KARMA = 'Karma Siparişler';
 
@@ -36,9 +37,10 @@ export function comboOf(c, ctx, { includeRewards = false } = {}) {
 /**
  * @param computed computeOrder() sonuçları (arşiv özetleri hariç tutulmalı)
  * @returns {{ groups, karma, orders }} groups: en az `min` siparişli bileşimler (çoktan aza);
- *   karma: { orders, units, groups (karmaya düşen bileşimler), products (ürün toplamları) }
+ *   karma: { orders, units, groups (karmaya düşen bileşimler), products (ürün toplamları),
+ *            split: splitCats verilirse [{ key:'only'|'rest', orders, units, groups }] (Sadece Şişe / Kutulu) }
  */
-export function analyzeCombos(computed, ctx, { min = 10, includeRewards = false } = {}) {
+export function analyzeCombos(computed, ctx, { min = 10, includeRewards = false, splitCats = null } = {}) {
   const by = new Map();
   let orders = 0;
   for (const c of computed) {
@@ -59,10 +61,21 @@ export function analyzeCombos(computed, ctx, { min = 10, includeRewards = false 
     e.qty += p.qty * g.orders;
     products.set(p.id, e);
   }
+  let split = null;
+  if (splitCats) {
+    split = ['only', 'rest'].map((key) => ({ key, orders: 0, units: 0, groups: [] }));
+    for (const g of small) {
+      const part = split[kindOfIds(g.parts.map((p) => p.id), ctx, splitCats) === 'only' ? 0 : 1];
+      part.orders += g.orders;
+      part.units += g.units * g.orders;
+      part.groups.push(g);
+    }
+  }
   return {
     orders,
     groups,
     karma: {
+      split,
       orders: small.reduce((s, g) => s + g.orders, 0),
       units: small.reduce((s, g) => s + g.units * g.orders, 0),
       groups: small,

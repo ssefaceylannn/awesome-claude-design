@@ -89,6 +89,34 @@ await test('Kombinasyon analizi: aynı bileşim gruplanır, eşiğin altı Karma
   assert.deepEqual(p.unrecognized, ['bilinmeyen satır']);
 });
 
+await test('Karma ayıklama: yalnızca seçilen kategori → 1. grup; karışık, kategorisiz ve tanınmayan → 2. grup; kombinasyonda karma ikiye ayrılır', async () => {
+  const { classifyOrder, kindOfIds } = await import('../public/assets/js/shared/karma.js');
+  const { analyzeCombos } = await import('../public/assets/js/shared/combos.js');
+  const ps = [{ id: 'cm', name: 'Coconut Mix', category: 'İçecek & Mix' }, { id: 'dm', name: 'Detox Mix', category: 'İçecek & Mix' },
+    { id: 'zs', name: 'Zencefil Shot', category: 'Shot' }, { id: 'mk', name: 'Magnezyum Kapsül', category: 'Takviye & Kapsül' }, { id: 'xx', name: 'Kahve Kupası' }];
+  const ctx = createContext({ products: ps, stores: [], campaigns: [], aliases: {}, settings: {} });
+  const cats = ['içecek & mix']; // büyük/küçük harf ve Türkçe karakter farkı önemsiz
+  const kind = (items) => classifyOrder(computeOrder({ k: '_', sender: 'X', items }, ctx), ctx, cats);
+  assert.deepEqual(kind([{ name: 'Coconut Mix', qty: 2 }, { name: 'Detox Mix', qty: 1 }]), { kind: 'only', group: 'only' });
+  assert.deepEqual(kind([{ name: 'Coconut Mix', qty: 1 }, { name: 'Zencefil Shot', qty: 1 }]), { kind: 'mixed', group: 'rest' });
+  assert.deepEqual(kind([{ name: 'Coconut Mix', qty: 1 }, { name: 'Magnezyum Kapsül', qty: 1 }]), { kind: 'mixed', group: 'rest' });
+  assert.deepEqual(kind([{ name: 'Zencefil Shot', qty: 1 }, { name: 'Magnezyum Kapsül', qty: 1 }]), { kind: 'none', group: 'rest' });
+  assert.deepEqual(kind([{ name: 'Coconut Mix', qty: 1 }, { name: 'Kahve Kupası', qty: 1 }]), { kind: 'mixed', group: 'rest' }); // kategorisiz ürün başka kategori sayılır
+  assert.deepEqual(kind([{ name: 'Coconut Mix', qty: 1 }, { name: 'Bilinmeyen Şey', qty: 1 }]), { kind: 'unmatched', group: 'rest' });
+  assert.equal(kindOfIds(['cm'], ctx, []), 'none'); // kategori seçilmezse hiçbir şey ayrılmaz
+  assert.equal(kindOfIds(['cm', 'zs'], ctx, ['İçecek & Mix', 'Shot']), 'only'); // birden çok kategori seçilebilir
+  // Kombinasyon: eşik altı bileşimler "Sadece Şişe" ve "Kutulu" olarak ayrılır, toplam aynı kalır
+  const mk = (k, items) => computeOrder({ k, sender: 'X', items }, ctx);
+  const computed = [];
+  for (let i = 0; i < 10; i++) computed.push(mk('a' + i, [{ name: 'Zencefil Shot', qty: 1 }]));
+  computed.push(mk('b', [{ name: 'Coconut Mix', qty: 1 }, { name: 'Detox Mix', qty: 1 }]), mk('c', [{ name: 'Coconut Mix', qty: 3 }]),
+    mk('d', [{ name: 'Coconut Mix', qty: 1 }, { name: 'Zencefil Shot', qty: 1 }]), mk('e', [{ name: 'Magnezyum Kapsül', qty: 1 }]), mk('f', [{ name: 'Bilinmeyen', qty: 1 }]));
+  const R = analyzeCombos(computed, ctx, { min: 10, splitCats: ['İçecek & Mix'] });
+  assert.equal(R.karma.orders, 5);
+  assert.deepEqual(R.karma.split.map((x) => [x.key, x.orders, x.units]), [['only', 2, 5], ['rest', 3, 4]]);
+  assert.equal(analyzeCombos(computed, ctx, { min: 10 }).karma.split, null);
+});
+
 await test('Hepsiburada CSV: paket = sipariş, satır başına kalem, adet sütundan, mağaza A1\'den', async () => {
   const { parseCsv, readTable } = await import('../public/assets/js/core/sheets.js');
   const head = 'Barkod;Paket Numarası;Kargo Firması;Sipariş Tarihi;Kargo Takip No;Sipariş Numarası;Kalem Numarası;Alıcı;Şehir;Semt;Hepsiburada Ürün Kodu;Satıcı Stok Kodu;Ürün Adı;Adet;Faturalandırılacak Satış Fiyatı;Paket Durumu';

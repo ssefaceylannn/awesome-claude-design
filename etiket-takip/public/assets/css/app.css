@@ -758,3 +758,4 @@ a { color: var(--brand); }
 .print-setup input[type=range] { width: 100%; accent-color: var(--honey-2); }
 .sheet-wrap { background: var(--surface-3); border-radius: 12px; padding: 14px; overflow: auto; max-height: 62vh; }
 .sheet { background: #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, .18); box-sizing: border-box; overflow: hidden; margin: 0 auto; }
+button.badge { border: 0; font-family: inherit; cursor: pointer; }

@@ -11,7 +11,9 @@ async function pdfjs() {
 /**
  * @param {File[]} files
  * @param {{manualDate?:string, onProgress?:(done,total)=>void}} opt
- * @returns {{orders, log, pages, files}}
+ * @returns {{orders, log, pages, files, fileList, pageList}}
+ *   pageList: okunan her sayfanın { fileIndex, filePage } bilgisi (sıra korunur);
+ *   orders[].pageNos: siparişin pageList içindeki sayfa numaraları (1'den başlar) — Karma Ayıklama için
  */
 export async function readLabels(files, { manualDate, onProgress } = {}) {
   const lib = await pdfjs();
@@ -32,7 +34,7 @@ export async function readLabels(files, { manualDate, onProgress } = {}) {
           const page = await doc.getPage(i);
           const vp = page.getViewport({ scale: 1 });
           const p = parsePage((await page.getTextContent()).items, vp.height);
-          Object.assign(p, { file: f.name, filePage: i, date });
+          Object.assign(p, { file: f.name, fileIndex: idx, filePage: i, date });
           pages.push(p);
           page.cleanup();
         }
@@ -58,11 +60,12 @@ export async function readLabels(files, { manualDate, onProgress } = {}) {
     cargoCode: o.cargoCode,
     items: o.items,
     pages: o.pages.length,
+    pageNos: o.pages.slice(),
     file: o.file,
     date: o.date || manualDate || today(),
     startsAsContinuation: !!o.startsAsContinuation,
     orphan: !!o.orphan,
     warnings: o.warnings || [],
   }));
-  return { orders, log: log.concat(combined.log), pages: pages.length, files: list.map((f) => f.name) };
+  return { orders, log: log.concat(combined.log), pages: pages.length, files: list.map((f) => f.name), fileList: list, pageList: pages.map((p) => ({ fileIndex: p.fileIndex, filePage: p.filePage })) };
 }
