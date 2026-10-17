@@ -245,6 +245,10 @@ export default async function combosPage(ctx) {
   // Sayfa düzeni ayarları hatırlanır; önizleme ve çıktı aynı HTML/CSS ile üretilir.
   const PCOLS = [['products', 'Ürünler'], ['orders', 'Sipariş adedi'], ['units', 'Ürün adedi']];
   const PADS = { s: ['Sıkı', 3], m: ['Normal', 6], l: ['Geniş', 10] };
+  // Elle doldurulacak boş sütunlar (ör. personel zimmeti: İsim, İmza); başlıkları kullanıcı yazar
+  const XW = { s: ['Dar', 6], m: ['Orta', 9], l: ['Geniş', 13] };
+  const cleanExtra = (a) => (Array.isArray(a) ? a : []).slice(0, 8)
+    .map((x) => ({ label: String((x && x.label) || '').trim().slice(0, 40), w: XW[x && x.w] ? x.w : 'm' }));
   const printPref = () => {
     const raw = loadPref().print;
     const p = raw || {};
@@ -258,6 +262,7 @@ export default async function combosPage(ctx) {
       margin: Math.min(25, Math.max(0, p.margin == null ? 12 : +p.margin)),
       newPage: !!p.newPage,
       title: p.title !== false,
+      extra: cleanExtra(p.extra).filter((x) => x.label),
       saved: !!raw,
     };
   };
@@ -276,10 +281,19 @@ export default async function combosPage(ctx) {
   /** Çıktı içeriği: yalnızca seçilen sütunlar (kaldırılan sütunun başlığı da hücreleri de yok) */
   function printHtml(p, { preview = false } = {}) {
     const has = (k) => p.cols.includes(k);
+    const extra = (p.extra || []).filter((x) => x.label);
     const nums = p.cols.filter((k) => k !== 'products').length;
-    const pw = has('products') && nums ? (p.pw || (nums === 1 ? 75 : 62)) : null;
-    const row = (label, orders, units, karma) => html`<tr class="${karma ? 'karma' : ''}">${has('products') ? html`<td class="p">${label}</td>` : ''}${has('orders') ? html`<td class="num">${n(orders)}</td>` : ''}${has('units') ? html`<td class="num">${n(units)}</td>` : ''}</tr>`;
-    const head = html`<tr>${has('products') ? html`<th class="p" ${pw ? raw(`style="width:${pw}%"`) : ''}>Ürünler${preview && pw ? html`<span class="cw" data-cw title="Sürükleyerek sütun genişliğini ayarlayın"></span>` : ''}</th>` : ''}${has('orders') ? html`<th class="num">Sipariş adedi</th>` : ''}${has('units') ? html`<th class="num">Ürün adedi</th>` : ''}</tr>`;
+    // Boş sütun varsa ürün sütunu daha dar başlar; önizlemede sürüklenerek ayarlanır
+    const pw = has('products') && nums + extra.length ? (p.pw || (extra.length ? Math.max(30, 56 - 6 * extra.length - 4 * nums) : nums === 1 ? 75 : 62)) : null;
+    // Boş sütun varken tüm genişlikler yüzde: ürün sütunundan kalan pay, sayı ve boş sütunlara ağırlıklarıyla bölünür
+    const wts = [...p.cols.filter((k) => k !== 'products').map(() => 8), ...extra.map((x) => XW[x.w][1])];
+    const share = (w) => `${(((100 - (pw || 0)) * w) / wts.reduce((a, b) => a + b, 0)).toFixed(2)}%`;
+    const numW = extra.length ? raw(`style="width:${share(8)}"`) : '';
+    const xcells = (tag) => extra.map((x) => tag === 'th'
+      ? html`<th class="x" style="width:${share(XW[x.w][1])}">${x.label}</th>`
+      : html`<td class="x"></td>`);
+    const row = (label, orders, units, karma) => html`<tr class="${karma ? 'karma' : ''}">${has('products') ? html`<td class="p">${label}</td>` : ''}${has('orders') ? html`<td class="num">${n(orders)}</td>` : ''}${has('units') ? html`<td class="num">${n(units)}</td>` : ''}${xcells('td')}</tr>`;
+    const head = html`<tr>${has('products') ? html`<th class="p" ${pw ? raw(`style="width:${pw}%"`) : ''}>Ürünler${preview && nums + extra.length ? html`<span class="cw" data-cw title="Sürükleyerek sütun genişliğini ayarlayın"></span>` : ''}</th>` : ''}${has('orders') ? html`<th class="num" ${numW}>Sipariş adedi</th>` : ''}${has('units') ? html`<th class="num" ${numW}>Ürün adedi</th>` : ''}${xcells('th')}</tr>`;
     const scope = [rangeLabel(from, to), batchIds.length || tFrom || tTo ? 'seçili yüklemeler' + (tFrom || tTo ? ` ${tFrom || '…'}–${tTo || '…'}` : '') : ''].filter(Boolean).join(' · ');
     const style = `--fs:${p.fs}pt;--pad:${PADS[p.pad][1]}px`;
     return html`<div class="cprint ${has('products') ? '' : 'nop'} ${pw ? 'pw' : ''} cols-${nums}" style="${style}">
@@ -296,7 +310,9 @@ export default async function combosPage(ctx) {
     let ok = false;
     let paperId = p.paper;
     let pw = p.pw;
+    let extra = cleanExtra(p.extra);
     const read = (d) => ({
+      extra: extra.filter((x) => x.label),
       cols: [...d.querySelectorAll('[name=col]:checked')].map((x) => x.value),
       paper: paperId,
       pw,
@@ -312,6 +328,7 @@ export default async function combosPage(ctx) {
       body: html`<div class="print-setup">
         <div class="stack" style="gap:14px">
           <div class="f">Sütunlar<div class="row wrap" style="gap:14px;margin-top:6px">${PCOLS.map(([k, l]) => html`<label class="check"><input type="checkbox" name="col" value="${k}" ${p.cols.includes(k) ? 'checked' : ''}> ${l}</label>`)}</div></div>
+          <div class="f">Boş sütunlar <span class="hint">kâğıtta elle doldurulur — ör. barkodu teslim alan personelin adı ve imzası</span><div id="pExtra" style="margin-top:6px"></div></div>
           <div class="f">Kâğıt boyutu <span class="hint">A4, etiket ya da kendi eklediğiniz ölçü</span><div id="pPaper"></div></div>
           <label class="f">Yazı boyutu <span class="hint" id="fsV">${p.fs} punto</span><input type="range" name="fs" min="6" max="24" step="0.5" value="${p.fs}"></label>
           <label class="f">Satır aralığı<select class="input" name="pad">${Object.entries(PADS).map(([k, [l]]) => html`<option value="${k}" ${p.pad === k ? 'selected' : ''}>${l}</option>`)}</select></label>
@@ -337,6 +354,44 @@ export default async function combosPage(ctx) {
           d.querySelector('#pvInfo').textContent = `Önizleme · 1. sayfa · ${pp.w} × ${pp.h} mm`;
           mount(pv, html`<div class="sheet" style="width:${pp.w}mm;height:${pp.h}mm;padding:${q.margin}mm;zoom:${zoom}">${printHtml(show, { preview: true })}</div>`);
         };
+        // Boş sütun listesi: başlık yaz, genişlik seç, sırala, sil
+        const ex = d.querySelector('#pExtra');
+        const drawExtra = () => {
+          const has = (l) => extra.some((x) => x.label.toLocaleLowerCase('tr-TR') === l.toLocaleLowerCase('tr-TR'));
+          mount(ex, html`<div class="stack" style="gap:6px">
+            ${extra.map((x, i) => html`<div class="row xcol" style="gap:6px" data-i="${i}">
+              <input class="input sm" data-x="label" value="${x.label}" maxlength="40" placeholder="Sütun başlığı" style="flex:1 1 auto;min-width:90px;width:auto">
+              <select class="input sm" data-x="w" title="Sütun genişliği" style="width:86px;flex:none">${Object.entries(XW).map(([k, [l]]) => html`<option value="${k}" ${x.w === k ? 'selected' : ''}>${l}</option>`)}</select>
+              <button type="button" class="btn icon sm ghost" data-x="up" title="Sola al" ${i ? '' : 'disabled'}>↑</button>
+              <button type="button" class="btn icon sm ghost" data-x="down" title="Sağa al" ${i < extra.length - 1 ? '' : 'disabled'}>↓</button>
+              <button type="button" class="btn icon sm danger" data-x="del" title="Sütunu kaldır">${icon('trash')}</button>
+            </div>`)}
+            <div class="row wrap" style="gap:6px">
+              ${['İsim', 'İmza'].filter((l) => !has(l)).map((l) => html`<button type="button" class="btn sm" data-x="preset" data-l="${l}">${icon('plus')} ${l}</button>`)}
+              ${extra.length < 8 ? html`<button type="button" class="btn sm ghost" data-x="new">${icon('plus')} Yeni sütun</button>` : ''}
+            </div>
+          </div>`);
+        };
+        ex.addEventListener('input', (ev) => {
+          const r = ev.target.closest('[data-i]'); if (!r) return;
+          const x = extra[+r.dataset.i];
+          if (ev.target.dataset.x === 'label') x.label = ev.target.value.slice(0, 40);
+          if (ev.target.dataset.x === 'w') x.w = ev.target.value;
+        });
+        ex.addEventListener('click', (ev) => {
+          const b = ev.target.closest('button[data-x]'); if (!b) return;
+          const i = b.closest('[data-i]') ? +b.closest('[data-i]').dataset.i : -1;
+          const a = b.dataset.x;
+          if (a === 'preset') extra.push({ label: b.dataset.l, w: b.dataset.l === 'İmza' ? 'l' : 'm' });
+          else if (a === 'new') extra.push({ label: '', w: 'm' });
+          else if (a === 'del') extra.splice(i, 1);
+          else if (a === 'up' && i > 0) [extra[i - 1], extra[i]] = [extra[i], extra[i - 1]];
+          else if (a === 'down' && i < extra.length - 1) [extra[i + 1], extra[i]] = [extra[i], extra[i + 1]];
+          else return;
+          drawExtra(); draw();
+          if (a === 'new') [...ex.querySelectorAll('[data-x="label"]')].pop()?.focus();
+        });
+        drawExtra();
         paperPicker(d.querySelector('#pPaper'), { selected: paperId, onChange: (np) => { paperId = np.id; draw(); } });
         d.querySelector('#pwReset').addEventListener('click', () => { pw = null; draw(); });
         // Ürün sütununun sağ kenarını sürükle → genişlik (%)
@@ -359,7 +414,7 @@ export default async function combosPage(ctx) {
       },
       onSubmit: (v, d) => {
         const q = read(d);
-        if (!q.cols.length) throw new Error('En az bir sütun seçin');
+        if (!q.cols.length && !q.extra.length) throw new Error('En az bir sütun seçin');
         savePref({ print: q });
         ok = v === 'ok';
       },

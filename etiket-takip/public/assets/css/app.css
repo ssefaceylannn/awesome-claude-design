@@ -726,7 +726,7 @@ a { color: var(--brand); }
 .cprint h2 small { font-weight: 400; color: #444; font-size: .8em; }
 .cprint table { width: calc(100% - 2px); margin-right: 2px; table-layout: fixed; border-collapse: collapse; } /* dış çizgi sayfa kenarında kesilmesin */
 .cprint th, .cprint td { border: 1px solid #888; padding: var(--pad) calc(var(--pad) + 3px); vertical-align: middle; overflow-wrap: anywhere; color: #000; }
-.cprint th { background: #eee; text-align: center; font-weight: 700; }
+.cprint th { background: #eee; text-align: center; font-weight: 700; white-space: normal; overflow-wrap: normal; word-break: normal; hyphens: auto; }
 .cprint td.p { text-align: left; }
 /* Sayı sütunları yazı boyutuyla orantılı genişlikte; ürün sütunu kalan genişliği alır */
 .cprint th.num, .cprint td.num { width: calc(var(--fs) * 7); text-align: center; }
@@ -734,6 +734,8 @@ a { color: var(--brand); }
 .cprint.nop th.num, .cprint.nop td.num, .cprint.pw th.num, .cprint.pw td.num { width: auto; } /* .pw: ürün sütunu genişliği elle ayarlı */
 .cprint th.p { position: relative; }
 .cprint .cw { position: absolute; right: -6px; top: 0; bottom: 0; width: 12px; cursor: col-resize; background: rgba(224, 150, 15, .45); border-radius: 3px; touch-action: none; z-index: 2; }
+.cprint th.x { text-align: center; }
+.cprint td.x { height: calc(var(--fs) * 1.6); } /* elle yazılacak/imza atılacak boş hücre */
 .cprint tr { break-inside: avoid; page-break-inside: avoid; }
 .cprint thead { display: table-header-group; } /* tablo sonraki sayfaya taşarsa başlık tekrar eder */
 .cprint tr.karma td { font-weight: 700; background: #f2f2f2; }
