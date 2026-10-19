@@ -5,8 +5,9 @@
 //   none → seçimden hiç ürün olmayanlar ("Şişesiz") — yalnızca 3. grup açıksa; kapalıysa rest'e girer
 // Tanınmayan ürün içeren sipariş asla "only" sayılmaz: yanlışlıkla şişe grubuna düşmesin.
 import { fold } from './text.js';
+import { provinceOf } from './cities.js';
 
-export const DEFAULT_KARMA = { cats: ['İçecek & Mix'], productIds: [], names: { only: 'Sadece Şişe', rest: 'Kutulu', none: 'Şişesiz' }, third: false };
+export const DEFAULT_KARMA = { cats: ['İçecek & Mix'], productIds: [], names: { only: 'Sadece Şişe', rest: 'Kutulu', none: 'Şişesiz' }, third: false, cities: ['Düzce'] };
 
 /** Sunucudaki ayar (eksik alanlar varsayılanla) */
 export function karmaRule(k) {
@@ -17,6 +18,7 @@ export function karmaRule(k) {
     productIds: Array.isArray(k && k.productIds) ? k.productIds : [],
     names: { only: names.only || d.names.only, rest: names.rest || d.names.rest, none: names.none || d.names.none },
     third: !!(k && k.third),
+    cities: Array.isArray(k && k.cities) ? k.cities : d.cities,
   };
 }
 
@@ -54,6 +56,15 @@ export function classifyOrder(c, ctx, rule) {
 export const productInRule = (id, ctx, rule) => inSel(rule, ctx)(id);
 
 export const GROUPS = ['only', 'rest', 'none'];
+
+/** Şehre göre: alıcı ili seçilen illerden biri mi. @returns {{kind:'in'|'out'|'nocity', group:'in'|'out', province}} */
+export function classifyCity(cityText, rule) {
+  const province = provinceOf(cityText);
+  if (!province) return { kind: 'nocity', group: 'out', province };
+  const set = new Set((rule.cities || []).map((c) => fold(c)));
+  return set.has(fold(province)) ? { kind: 'in', group: 'in', province } : { kind: 'out', group: 'out', province };
+}
+export const CITY_KIND_LABEL = { in: 'Seçilen ilde', out: 'Başka ilde', nocity: 'İl okunamadı' };
 export const KIND_LABEL = {
   only: 'Yalnızca seçilen ürünler',
   mixed: 'Seçilen + seçim dışı ürün',

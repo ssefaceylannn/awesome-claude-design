@@ -126,6 +126,24 @@ await test('Karma ayıklama: kategori + ürün seçimi; yalnızca seçilenler �
   assert.equal(analyzeCombos(computed, ctx, { min: 10 }).karma.split, null);
 });
 
+await test('Şehre göre ayırma: etiketteki "İLÇE / İL" metninden il bulunur; seçilen il (varsayılan Düzce) ayrılır, okunamayan diğerlerinde kalır', async () => {
+  const { provinceOf, PROVINCES } = await import('../public/assets/js/shared/cities.js');
+  const { classifyCity, karmaRule } = await import('../public/assets/js/shared/karma.js');
+  assert.equal(PROVINCES.length, 81);
+  assert.equal(provinceOf('AKÇAKOCA / DÜZCE'), 'Düzce');
+  assert.equal(provinceOf('MERKEZ / AFYONKARAHISAR'), 'Afyonkarahisar');
+  assert.equal(provinceOf('ŞEHITKAMIL / GAZIANTEP'), 'Gaziantep');
+  assert.equal(provinceOf('İZMIT / KOCAELI'), 'Kocaeli');
+  assert.equal(provinceOf('K.MARAŞ'), 'Kahramanmaraş');
+  assert.equal(provinceOf(''), '');
+  const rule = karmaRule({}); // varsayılan: Düzce
+  assert.deepEqual(rule.cities, ['Düzce']);
+  assert.deepEqual(classifyCity('MERKEZ / DÜZCE', rule), { kind: 'in', group: 'in', province: 'Düzce' });
+  assert.deepEqual(classifyCity('KADIKÖY / İSTANBUL', rule), { kind: 'out', group: 'out', province: 'İstanbul' });
+  assert.deepEqual(classifyCity('', rule), { kind: 'nocity', group: 'out', province: '' });
+  assert.equal(classifyCity('KADIKÖY / İSTANBUL', karmaRule({ cities: ['Düzce', 'İstanbul'] })).group, 'in');
+});
+
 await test('Hepsiburada CSV: paket = sipariş, satır başına kalem, adet sütundan, mağaza A1\'den', async () => {
   const { parseCsv, readTable } = await import('../public/assets/js/core/sheets.js');
   const head = 'Barkod;Paket Numarası;Kargo Firması;Sipariş Tarihi;Kargo Takip No;Sipariş Numarası;Kalem Numarası;Alıcı;Şehir;Semt;Hepsiburada Ürün Kodu;Satıcı Stok Kodu;Ürün Adı;Adet;Faturalandırılacak Satış Fiyatı;Paket Durumu';

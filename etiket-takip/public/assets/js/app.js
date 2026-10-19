@@ -12,7 +12,7 @@ const NAV = [
     { id: 'resend', label: 'Yeniden Gönderim', icon: 'refresh', role: 'personel' },
     { id: 'production', label: 'Üretim Listesi', icon: 'factory' },
     { id: 'combos', label: 'Kombinasyon Analizi', icon: 'copy' },
-    { id: 'karma', label: 'Karma Ayıklama', icon: 'split', role: 'personel' },
+    { id: 'karma', label: 'Etiket Ayıklama', icon: 'split', role: 'personel' },
     { id: 'orders', label: 'Siparişler', icon: 'receipt' },
     { id: 'calendar', label: 'Günlük Arşiv', icon: 'calendar' },
     { id: 'scan', label: 'Barkod Kontrol', icon: 'scan', role: 'personel' },

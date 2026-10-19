@@ -13,7 +13,7 @@ const bucketKey = (orderNo) => 'idx/' + String(hashStr(String(orderNo).trim()) %
 const PLATFORMS = ['trendyol', 'ikas', 'shopify', 'hepsiburada', 'n11', 'amazon', 'pazarama', 'ciceksepeti', 'diger'];
 
 // Karma Ayıklama kuralı: seçilen kategoriler/ürünler, grup adları, 3. grup (varsayılan kapalı)
-const DEFAULT_KARMA = () => ({ cats: ['İçecek & Mix'], productIds: [], names: { only: 'Sadece Şişe', rest: 'Kutulu', none: 'Şişesiz' }, third: false });
+const DEFAULT_KARMA = () => ({ cats: ['İçecek & Mix'], productIds: [], names: { only: 'Sadece Şişe', rest: 'Kutulu', none: 'Şişesiz' }, third: false, cities: ['Düzce'] });
 const DEFAULT_CONFIG = () => ({
   stores: [],
   products: [],
@@ -166,6 +166,8 @@ const SANITIZE = {
       productIds: Array.isArray(k && k.productIds) ? [...new Set(k.productIds.filter(id))].slice(0, 500) : [],
       names: { only: nm(names.only, d.names.only), rest: nm(names.rest, d.names.rest), none: nm(names.none, d.names.none) },
       third: !!(k && k.third),
+      // Şehre göre ayırma: seçilen iller (etiketteki alıcı adresinin ili)
+      cities: Array.isArray(k && k.cities) ? [...new Set(k.cities.map((c) => str(c, 40)).filter(Boolean))].slice(0, 81) : d.cities,
     };
   },
   settings: (s) => ({
