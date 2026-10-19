@@ -21,6 +21,11 @@ export default async function dispatchPage(ctx) {
   let read = null; // readLabels sonucu
   let packets = []; // { no, kind, label, store, pages:[pageIdx], orders:[row], assignee }
   let dupPackets = []; // tekrar eden dosyalar (indirilmez)
+  // İl (Düzce) ayırma: öğleden önce açık, öğleden sonra kapalı başlar; elle değiştirilebilir (hatırlanmaz,
+  // ertesi sabah yanlışlıkla kapalı kalmasın diye her açılışta saate göre ayarlanır)
+  let splitCity = new Date().getHours() < 12;
+  const cityName = rule.cities.join(', ') || 'Seçilen il';
+  const inCity = (r) => splitCity && r.city.group === 'in';
   // Çıktı: 'separate' = her paket ayrı PDF, 'combined' = tek PDF (P1'den sırayla) — bu tarayıcıda hatırlanır
   let outMode = 'separate';
   try { if (localStorage.getItem('et-dispatch-out') === 'combined') outMode = 'combined'; } catch { /* yok */ }
@@ -37,8 +42,9 @@ export default async function dispatchPage(ctx) {
         <input type="file" id="file" accept="application/pdf,.pdf" multiple hidden>
         <div class="ic">${icon('upload')}</div>
         <b>OMS'den indirilen bütün etiket PDF'lerini buraya sürükleyin</b>
-        <div class="muted">kombinasyon PDF'leri ve karma PDF'leri birlikte · ${rule.cities.join(', ') || 'seçilen il'} siparişleri bütün dosyalardan ayrı pakete alınır · barkod sayfaları değişmez</div>
+        <div class="muted">kombinasyon PDF'leri ve karma PDF'leri birlikte · barkod sayfaları değişmez</div>
       </label>
+      <label class="check" id="cityWrap"><input type="checkbox" id="splitCity" ${splitCity ? 'checked' : ''}> <span><b>${cityName} siparişlerini ayrı pakete al</b> <span class="muted small" id="cityHint"></span></span></label>
       <div id="prog" class="hidden"><div class="row small" style="margin-bottom:6px"><span id="progText">Okunuyor…</span></div><div class="progress"><i id="progBar" style="width:0"></i></div></div>
     </div></div>
     <div id="out"></div>
@@ -88,6 +94,16 @@ export default async function dispatchPage(ctx) {
   ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
   drop.addEventListener('drop', (e) => handle([...e.dataTransfer.files]));
 
+  const cityHint = () => { $('#cityHint').textContent = splitCity ? `— açık: ${cityName} siparişleri bütün dosyalardan çıkar, P1 (PTT) paketi olur` : `— kapalı: ${cityName} siparişleri kendi paketlerinde kalır`; };
+  cityHint();
+  $('#splitCity').addEventListener('change', (e) => {
+    splitCity = e.target.checked; cityHint();
+    if (!read) return;
+    build();
+    if (savedId) savedSig = '*'; // paketler değişti: indirirken dağıtım kaydı yenilenir
+    render();
+  });
+
   // Sipariş tarihi Etiket Yükle'deki seçimi izler (varsayılan bugün; "dosya adındaki tarih" seçiliyse o)
   const dateMode = () => { try { return localStorage.getItem('et-datemode') || 'today'; } catch { return 'today'; } };
 
@@ -120,7 +136,7 @@ export default async function dispatchPage(ctx) {
     });
     const byFile = read.fileList.map((f, fi) => {
       const list = rows.filter((r) => r.fi === fi);
-      const combos = new Set(list.filter((r) => r.city.group !== 'in').map((r) => r.combo.key));
+      const combos = new Set(list.filter((r) => !inCity(r)).map((r) => r.combo.key));
       return { f, fi, list, karma: /karma/i.test(f.name) || combos.size > 1 };
     });
     const out = [];
@@ -135,9 +151,9 @@ export default async function dispatchPage(ctx) {
       return p;
     };
     // İl paketi (Düzce → PTT) her zaman P1: önce o çıkar
-    add('city', `${rule.cities.join(', ') || 'Seçilen il'} (PTT)`, rows.filter((r) => r.city.group === 'in'), -1);
+    if (splitCity) add('city', `${cityName} (PTT)`, rows.filter(inCity), -1);
     for (const F of byFile) {
-      const rest = F.list.filter((r) => r.city.group !== 'in');
+      const rest = F.list.filter((r) => !inCity(r));
       // Bu dosyanın siparişe ait olmayan sayfaları (mükerrer/okunamayan) dosyanın kendi paketinde kalır
       const mine = new Set(F.list.flatMap((r) => r.o.pageNos.map((x) => x - 1)));
       const loose = read.pageList.map((pg, i) => (pg.fileIndex === F.fi && !mine.has(i) ? i : -1)).filter((i) => i >= 0);
@@ -175,7 +191,7 @@ export default async function dispatchPage(ctx) {
     const dupPages = dupPackets.reduce((s, p) => s + p.pages.length, 0);
     const dupLog = read.log.filter((l) => l.type === 'dup');
     const unmatched = packets.filter((p) => ['only', 'rest', 'none'].includes(p.kind)).flatMap((p) => p.orders).filter((r) => r.c.lines.some((l) => !l.ignored && l.units && !l.productId));
-    const nocity = packets.flatMap((p) => p.orders).filter((r) => r.city.kind === 'nocity');
+    const nocity = splitCity ? packets.flatMap((p) => p.orders).filter((r) => r.city.kind === 'nocity') : [];
     const warns = read.log.filter((l) => l.type === 'error' || l.type === 'warn' || l.type === 'dup');
     mount($('#out'), html`<div class="stack">
       <div class="kpis">
