@@ -211,7 +211,7 @@ export default async function karmaPage(ctx) {
         <div class="kpi"><div class="l">${icon('file')}Okunan</div><div class="v">${n(rows.length)}</div><div class="s">sipariş · ${n(read.pageList.length)} sayfa · ${n(read.fileList.length)} dosya</div>
           <button class="btn sm" id="toSite" style="margin-top:8px" title="Dosyaları Etiket Yükle sayfasına aktarır; daha önce kaydedilmiş siparişler orada mükerrer olarak gösterilir">${icon('upload')}Siteye kaydet</button></div>
         ${G.map((g, gi) => html`<div class="kpi ${gi === 0 ? 'hl' : ''}"><div class="l">${icon(KPI_ICON[g])}${gname(g)}</div><div class="v">${n(cnt(g))}</div><div class="s">${n(pages(g))} sayfa · ${sub[g]}</div>
-          <div class="row" style="gap:6px;margin-top:8px"><button class="btn sm ${gi === 0 ? 'primary' : ''}" data-dl="${g}" ${pages(g) ? '' : 'disabled'}>${icon('download')}PDF indir</button><button class="btn sm" data-pr="${g}" ${pages(g) ? '' : 'disabled'} title="Dosya açmadan doğrudan yazdır">${icon('printer')}Yazdır</button></div></div>`)}
+          <div class="row" style="gap:6px;margin-top:8px"><button class="btn sm ${gi === 0 ? 'primary' : ''}" data-dl="${g}" ${pages(g) ? '' : 'disabled'}>${icon('download')}PDF indir</button><button class="btn sm" data-pr="${g}" ${pages(g) ? '' : 'disabled'} title="Doğrudan yazdır (aynı zamanda PDF olarak indirilir)">${icon('printer')}Yazdır</button></div></div>`)}
       </div>
       ${empty ? html`<div class="callout warn">${icon('alert')}<div class="c"><b>${mode === 'city' ? 'İl seçilmedi' : 'Kategori ya da ürün seçilmedi'}</b>Yukarıdan seçim yapın; seçilmezse hiçbir sipariş ayrılmaz.</div></div>` : ''}
       <div class="callout info">${icon('info')}<div class="c"><b>${gname(rest)} grubunda neler var</b>${Object.entries(kinds).map(([k, v]) => `${kindLabel(k)}: ${n(v)}`).join(' · ') || '—'}${loose ? ` · sipariş dışı sayfa (mükerrer/okunamayan): ${n(loose)}` : ''}. Her sayfa dosyalardan yalnızca birinde, PDF'teki sırasıyla yer alır; toplam ${G.map((g) => n(pages(g))).join(' + ')} = ${n(read.pageList.length)} sayfa.</div></div>
@@ -251,7 +251,8 @@ export default async function karmaPage(ctx) {
     const pr = e.target.closest('[data-pr]');
     if (pr) {
       busy(pr, true, '');
-      try { const pg = pageGroups(); await printPdf(await buildPdf(read.fileList, read.pageList.filter((_, i) => pg[i] === pr.dataset.pr))); } catch (err) { toast(err.message, 'err'); }
+      // Yazdırırken aynı zamanda indirilir
+      try { const bytes = await save(pr.dataset.pr); await printPdf(bytes); } catch (err) { toast(err.message, 'err'); }
       busy(pr, false);
       return;
     }
@@ -275,6 +276,7 @@ export default async function karmaPage(ctx) {
       .normalize('NFKD').replace(/[^\x20-\x7e]/g, '').replace(/[\\/:*?"<>|]+/g, '-');
     download(name, new Blob([bytes], { type: 'application/pdf' }));
     toast(`${name} indirildi (${refs.length} sayfa, kaynakla birebir aynı)`, 'ok');
+    return bytes;
   }
 
   showMode();

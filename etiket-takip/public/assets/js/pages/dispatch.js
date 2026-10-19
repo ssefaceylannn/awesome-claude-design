@@ -214,7 +214,7 @@ export default async function dispatchPage(ctx) {
               ${p.kind !== 'combo' ? html`<div class="muted xs">${summary(p).slice(0, 4).map((g) => `${g.label} (${g.orders})`).join(' · ')}${summary(p).length > 4 ? ` · +${summary(p).length - 4} bileşim` : ''}</div>` : html`<div class="muted xs">${read.fileList[p.fi].name}</div>`}</td>
             <td class="num big">${n(p.orders.length)}</td><td class="num">${n(p.pages.length)}</td>
             <td><input class="input sm" data-as="${i}" list="dispatchNames" value="${p.assignee}" placeholder="Ad Soyad" maxlength="60" style="width:170px"></td>
-            <td class="nowrap"><button class="btn sm ghost" data-print="${i}" title="P${p.no} paketini yazdır (dosya açmadan)">${icon('printer')}</button><button class="btn sm ghost" data-one="${i}" title="Yalnızca bu paketin PDF'i (P${p.no})">${icon('download')}</button></td></tr>`)}
+            <td class="nowrap"><button class="btn sm ghost" data-print="${i}" title="P${p.no} paketini yazdır (aynı zamanda PDF olarak indirilir)">${icon('printer')}</button><button class="btn sm ghost" data-one="${i}" title="Yalnızca bu paketin PDF'i (P${p.no})">${icon('download')}</button></td></tr>`)}
         </tbody></table></div>
         <div class="card-f row wrap" style="gap:8px">
           <span class="muted small">${savedId ? html`${icon('check')} Kaydedildi — paketler ve teslim alanlar kayıtlı.` : 'Kaydedince siparişler siteye eklenir ve hangi paketin kime verildiği kaydedilir.'}</span>
@@ -225,7 +225,7 @@ export default async function dispatchPage(ctx) {
           </div>
           <button class="btn" id="list">${icon('printer')}Zimmet listesi (A4)</button>
           <button class="btn" id="covers" title="Her paket için bir kapak sayfası (paket no, içerik, teslim alan, imza) — barkod PDF'inden ayrı dosya">${icon('file')}Kapak sayfaları (ayrı PDF)</button>
-          <button class="btn" id="printAll" title="Bütün paketler tek yazdırma işinde, P1'den sırayla (dosya açmadan)">${icon('printer')}Hepsini yazdır</button>
+          <button class="btn" id="printAll" title="Bütün paketler tek yazdırma işinde, P1'den sırayla; aynı zamanda seçili biçimde indirilir">${icon('printer')}Hepsini yazdır</button>
           <button class="btn primary" id="go">${icon('download')}${savedId ? 'Tekrar indir' : 'Kaydet ve indir'}${outMode === 'combined' ? ' (tek PDF)' : ` (${packets.length} PDF)`}</button>
         </div></div>
     </div>`);
@@ -254,9 +254,16 @@ export default async function dispatchPage(ctx) {
       try {
         if (!savedId) await saveAll(pr.id ? pr : $('#go'));
         else if (sig() !== savedSig) await saveDispatch();
-        const list = pr.id ? packets : [packets[+pr.dataset.print]];
-        const bytes = await buildPdf(read.fileList, list.flatMap((p) => p.pages.map((i) => read.pageList[i])));
-        await printPdf(bytes, { onProgress: (d, t) => { if (pr.id) pr.lastChild.textContent = `Hazırlanıyor… ${d}/${t}`; } });
+        // Yazdırırken aynı zamanda indirilir (seçili çıktı biçimiyle: ayrı ayrı ya da toplu)
+        let bytes;
+        if (pr.id) {
+          if (outMode === 'separate') await downloadAll(pr);
+          bytes = await buildPdf(read.fileList, packets.flatMap((p) => p.pages.map((i) => read.pageList[i])));
+          if (outMode === 'combined') download(`Dagitim - ${stamp()} - ${packets.length} paket (P1-P${packets.length}).pdf`, new Blob([bytes], { type: 'application/pdf' }));
+        } else {
+          bytes = await makePdf(packets[+pr.dataset.print], true);
+        }
+        await printPdf(bytes, { onProgress: (d, t) => { if (pr.id) pr.lastChild.textContent = `Yazdırmaya hazırlanıyor… ${d}/${t}`; } });
       } catch (err) { toast(err.message, 'err'); }
       busy(pr, false);
       return render();
@@ -315,6 +322,7 @@ export default async function dispatchPage(ctx) {
     const name = `${pno(p)} - ${asciiName(p.label)}${p.store && p.kind !== 'city' ? ' - ' + asciiName(p.store) : ''} - ${stamp()}.pdf`;
     download(name, new Blob([bytes], { type: 'application/pdf' }));
     if (!quiet) toast(`${name} indirildi — ${n(refs.length)} sayfa, kaynakla birebir aynı`, 'ok');
+    return bytes;
   }
   /** Bütün paketler: ayrı ayrı (her biri bir dosya) ya da toplu (tek dosya), P1'den başlayarak sırayla */
   async function downloadAll(btn) {
