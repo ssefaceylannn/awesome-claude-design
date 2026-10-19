@@ -682,7 +682,7 @@ export default async (req) => {
       need(user, 'admin', 'personel');
       const b = await body(req);
       const date = isYmd(b.date) ? b.date : todayTR();
-      const packets = (Array.isArray(b.packets) ? b.packets : []).slice(0, 300).map((p, i) => ({
+      const packets = (Array.isArray(b.packets) ? b.packets : []).slice(0, 999).map((p, i) => ({
         no: int(p && p.no, 1, 9999, i + 1),
         label: str(p && p.label, 160),
         kind: ['combo', 'only', 'rest', 'none', 'city', 'other'].includes(p && p.kind) ? p.kind : 'other',

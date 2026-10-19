@@ -5,7 +5,7 @@
 //   4. Kaydet: siparişler siteye kaydedilir (mükerrerler sayılmaz) + hangi paket kime verildi kaydedilir
 // KURAL: barkod PDF'inde yalnızca orijinal sayfalar vardır — aynen kopyalanır, yalnızca sıraları değişir, indirmeden
 // önce kaynakla tek tek karşılaştırılır (core/pdfsplit.js). Kapak sayfaları barkod PDF'ine KONMAZ, ayrı dosyadır.
-import { html, mount, icon, n, toast, busy, download, loadScript, today, trDate, trDateTime, personName, emptyState, confirmDialog } from '../core/ui.js';
+import { html, mount, icon, n, toast, busy, download, loadScript, today, trDate, trDateTime, personName, emptyState } from '../core/ui.js';
 import { buildPdf } from '../core/pdfsplit.js';
 import { api, state, invalidateOrders } from '../core/api.js';
 import { readLabels } from '../core/labels.js';
@@ -20,6 +20,7 @@ export default async function dispatchPage(ctx) {
   const rule = karmaPref();
   let read = null; // readLabels sonucu
   let packets = []; // { no, kind, label, store, pages:[pageIdx], orders:[row], assignee }
+  let dupPackets = []; // tekrar eden dosyalar (indirilmez)
   let dry = null; // { new, dup, merge, error } kayıt öncesi kontrol
   let savedId = null; // kaydedildiyse dağıtım kaydı
   let savedSig = ''; // kaydedilen teslim alanlar (sonradan değişirse dağıtım kaydı yenilenir)
@@ -130,13 +131,15 @@ export default async function dispatchPage(ctx) {
       out.push(p);
       return p;
     };
+    // İl paketi (Düzce → PTT) her zaman P1: önce o çıkar
+    add('city', `${rule.cities.join(', ') || 'Seçilen il'} (PTT)`, rows.filter((r) => r.city.group === 'in'), -1);
     for (const F of byFile) {
       const rest = F.list.filter((r) => r.city.group !== 'in');
       // Bu dosyanın siparişe ait olmayan sayfaları (mükerrer/okunamayan) dosyanın kendi paketinde kalır
       const mine = new Set(F.list.flatMap((r) => r.o.pageNos.map((x) => x - 1)));
       const loose = read.pageList.map((pg, i) => (pg.fileIndex === F.fi && !mine.has(i) ? i : -1)).filter((i) => i >= 0);
       if (!F.karma) {
-        add('combo', rest[0] ? rest[0].combo.label : F.f.name, rest, F.fi, loose);
+        add('combo', rest[0] ? rest[0].combo.label : F.f.name.replace(/\.pdf$/i, ''), rest, F.fi, loose);
         continue;
       }
       const g = { only: [], rest: [], none: [] };
@@ -146,32 +149,39 @@ export default async function dispatchPage(ctx) {
       if (!pr && loose.length) add('rest', `Karma – ${rule.names.rest}`, [], F.fi, loose);
       add('none', `Karma – ${rule.names.none}`, g.none, F.fi);
     }
-    // İl paketi en sonda (PTT'ye ayrı verilir)
-    add('city', `${rule.cities.join(', ') || 'Seçilen il'} (PTT)`, rows.filter((r) => r.city.group === 'in'), -1);
     for (let i = 0; i < owner.length; i++) if (owner[i]) owner[i].pages.push(i);
     // Önceki seçilen kişiler (aynı dosya + tür) korunur
     const prev = new Map(packets.map((p) => [`${p.kind}|${p.fi}`, p.assignee]));
-    packets = out.map((p, i) => ({ ...p, no: i + 1, assignee: prev.get(`${p.kind}|${p.fi}`) || p.assignee }));
+    // Hiç siparişi olmayan, yalnızca bu yüklemede tekrar eden sayfalardan oluşan paket: aynı PDF iki kez atılmış.
+    // Numara verilmez, indirilmez, kaydedilmez (aynı barkodlar iki kez basılmasın).
+    const dupSet = new Set(read.log.filter((l) => l.type === 'dup' && l.page).map((l) => l.page - 1));
+    const isDup = (p) => !p.orders.length && p.pages.length && p.pages.every((i) => dupSet.has(i));
+    dupPackets = out.filter(isDup);
+    packets = out.filter((p) => !isDup(p)).map((p, i) => ({ ...p, no: i + 1, assignee: prev.get(`${p.kind}|${p.fi}`) || p.assignee }));
   }
 
   const KIND_BADGE = { combo: '', only: 'ok', rest: 'warn', none: 'info', city: 'err' };
   function render() {
     if (!read) return mount($('#out'), '');
     const total = packets.reduce((s, p) => s + p.pages.length, 0);
+    const dupPages = dupPackets.reduce((s, p) => s + p.pages.length, 0);
+    const dupLog = read.log.filter((l) => l.type === 'dup');
     const unmatched = packets.filter((p) => p.kind !== 'combo' && p.kind !== 'city').flatMap((p) => p.orders).filter((r) => r.c.lines.some((l) => !l.ignored && l.units && !l.productId));
     const nocity = packets.flatMap((p) => p.orders).filter((r) => r.city.kind === 'nocity');
-    const warns = read.log.filter((l) => l.type === 'error' || l.type === 'warn');
+    const warns = read.log.filter((l) => l.type === 'error' || l.type === 'warn' || l.type === 'dup');
     mount($('#out'), html`<div class="stack">
       <div class="kpis">
         <div class="kpi"><div class="l">${icon('file')}Okunan</div><div class="v">${n(read.orders.length)}</div><div class="s">sipariş · ${n(read.pageList.length)} sayfa · ${n(read.fileList.length)} dosya</div></div>
         <div class="kpi hl"><div class="l">${icon('box')}Paket</div><div class="v">${n(packets.length)}</div><div class="s">toplam ${n(total)} barkod sayfası</div></div>
         <div class="kpi"><div class="l">${icon('check')}Siteye kayıt</div><div class="v">${n(dry ? dry.new : 0)}</div><div class="s">yeni sipariş${dry && dry.dup ? ` · ${n(dry.dup)} daha önce kaydedilmiş (tekrar sayılmaz)` : ''}${dry && dry.merge ? ` · ${n(dry.merge)} devam` : ''}</div></div>
       </div>
-      ${total !== read.pageList.length ? html`<div class="callout err">${icon('alert')}<div class="c"><b>Sayfa sayısı tutmuyor (${n(total)} / ${n(read.pageList.length)})</b>Lütfen bu PDF'leri bana iletin; bu durumda yazdırmayın.</div></div>` : ''}
+      ${dupPackets.length ? html`<div class="callout err">${icon('alert')}<div class="c"><b>${n(dupPackets.length)} dosya başka bir dosyayla aynı siparişleri içeriyor — bunlar İNDİRİLMEZ</b>Aynı PDF iki kez atılmış olabilir: ${dupPackets.map((p) => read.fileList[p.fi] ? read.fileList[p.fi].name : '?').slice(0, 5).join(', ')}${dupPackets.length > 5 ? ` +${dupPackets.length - 5}` : ''} (${n(dupPages)} sayfa). Aynı barkodlar iki kez basılmasın diye paket yapılmadı.</div></div>` : ''}
+      ${dupLog.length && !dupPackets.length ? html`<div class="callout warn">${icon('alert')}<div class="c"><b>${n(dupLog.length)} etiket bu yüklemede iki kez geçiyor</b>Tekrar eden sayfa kendi dosyasının paketinde kalır (sayfa atılmaz); okuma notlarından hangileri olduğunu görebilirsiniz.</div></div>` : ''}
+      ${total + dupPages !== read.pageList.length ? html`<div class="callout err">${icon('alert')}<div class="c"><b>Sayfa sayısı tutmuyor (${n(total + dupPages)} / ${n(read.pageList.length)})</b>Lütfen bu PDF'leri bana iletin; bu durumda yazdırmayın.</div></div>` : ''}
       ${unmatched.length ? html`<div class="callout warn">${icon('alert')}<div class="c"><b>${n(unmatched.length)} karma siparişte tanınmayan ürün var — “${rule.names.rest}” paketinde bırakıldı</b><a href="#/matching">Ürün Eşleştirme</a>'den atayıp PDF'leri yeniden atabilirsiniz.</div></div>` : ''}
       ${nocity.length ? html`<div class="callout warn">${icon('alert')}<div class="c"><b>${n(nocity.length)} etikette il okunamadı</b>Bunlar kendi paketlerinde kaldı; ${rule.cities.join(', ')} olup olmadığını kontrol edin.</div></div>` : ''}
       ${warns.length ? html`<details class="card" style="padding:12px 16px"><summary class="small" style="cursor:pointer">Okuma notları (${warns.length})</summary><div class="small" style="margin-top:8px">${warns.map((l) => html`<div>${l.msg}</div>`)}</div></details>` : ''}
-      <div class="card"><div class="card-h"><h2>Paketler</h2><span class="sub">Her paketi kimin aldığını yazın · isimler önceki dağıtımlardan önerilir</span></div>
+      <div class="card"><div class="card-h"><h2>Paketler</h2><span class="sub">Teslim alan isteğe bağlı · isimler önceki dağıtımlardan önerilir · her paket ayrı PDF olarak iner</span></div>
         <div class="tw"><table class="t"><thead><tr><th>Paket</th><th>İçerik</th><th class="num">Sipariş</th><th class="num">Sayfa</th><th>Teslim alan</th><th></th></tr></thead><tbody>
           ${packets.map((p, i) => html`<tr>
             <td class="nowrap"><b style="font-size:1.25rem">P${p.no}</b></td>
@@ -179,14 +189,14 @@ export default async function dispatchPage(ctx) {
               ${p.kind !== 'combo' ? html`<div class="muted xs">${summary(p).slice(0, 4).map((g) => `${g.label} (${g.orders})`).join(' · ')}${summary(p).length > 4 ? ` · +${summary(p).length - 4} bileşim` : ''}</div>` : html`<div class="muted xs">${read.fileList[p.fi].name}</div>`}</td>
             <td class="num big">${n(p.orders.length)}</td><td class="num">${n(p.pages.length)}</td>
             <td><input class="input sm" data-as="${i}" list="dispatchNames" value="${p.assignee}" placeholder="Ad Soyad" maxlength="60" style="width:170px"></td>
-            <td class="nowrap"><button class="btn sm ghost" data-one="${i}" title="Yalnızca bu paketin PDF'i">${icon('download')}</button></td></tr>`)}
+            <td class="nowrap"><button class="btn sm ghost" data-one="${i}" title="Yalnızca bu paketin PDF'i (P${p.no})">${icon('download')}</button></td></tr>`)}
         </tbody></table></div>
         <div class="card-f row wrap" style="gap:8px">
           <span class="muted small">${savedId ? html`${icon('check')} Kaydedildi — paketler ve teslim alanlar kayıtlı.` : 'Kaydedince siparişler siteye eklenir ve hangi paketin kime verildiği kaydedilir.'}</span>
           <span class="spacer"></span>
           <button class="btn" id="list">${icon('printer')}Zimmet listesi (A4)</button>
           <button class="btn" id="covers" title="Her paket için bir kapak sayfası (paket no, içerik, teslim alan, imza) — barkod PDF'inden ayrı dosya">${icon('file')}Kapak sayfaları (ayrı PDF)</button>
-          <button class="btn primary" id="go">${icon('download')}${savedId ? 'Barkod PDF\'ini tekrar indir' : 'Kaydet ve barkod PDF\'ini indir'}</button>
+          <button class="btn primary" id="go">${icon('download')}${savedId ? `${packets.length} paketi tekrar indir` : `Kaydet ve ${packets.length} paketi indir`}</button>
         </div></div>
     </div>`);
   }
@@ -199,7 +209,7 @@ export default async function dispatchPage(ctx) {
   $('#out').addEventListener('input', (e) => { const i = e.target.dataset.as; if (i != null) packets[+i].assignee = e.target.value.trim(); });
   $('#out').addEventListener('click', async (e) => {
     const one = e.target.closest('[data-one]');
-    if (one) { busy(one, true, ''); try { await makePdf([packets[+one.dataset.one]]); } catch (err) { toast(err.message, 'err'); } busy(one, false); return; }
+    if (one) { busy(one, true, ''); try { await makePdf(packets[+one.dataset.one]); } catch (err) { toast(err.message, 'err'); } busy(one, false); return; }
     if (e.target.closest('#list')) return printList();
     const cv = e.target.closest('#covers');
     if (cv) {
@@ -213,12 +223,9 @@ export default async function dispatchPage(ctx) {
     busy(go, true, 'Hazırlanıyor…');
     try {
       if (savedId && sig() !== savedSig) await saveDispatch(); // yalnızca teslim alan düzeltildi
-      if (!savedId) {
-        const empty = packets.filter((p) => !p.assignee);
-        if (empty.length && !(await confirmDialog(`${empty.map((p) => 'P' + p.no).join(', ')} için teslim alan yazılmadı. Yine de kaydedilsin mi?`, { title: 'Teslim alan eksik', ok: 'Kaydet' }))) throw new Error('Vazgeçildi');
-        await saveAll(go);
-      }
-      await makePdf(packets);
+      // Teslim alan yazmak isteğe bağlı (masa şefleri sonradan dağıtabilir)
+      if (!savedId) await saveAll(go);
+      await downloadAll(go);
     } catch (err) { if (err.message !== 'Vazgeçildi') toast(err.message, 'err'); }
     busy(go, false);
     render();
@@ -249,13 +256,24 @@ export default async function dispatchPage(ctx) {
 
   // ------------------------------------------------------------- PDF
   const stamp = () => today().split('-').reverse().join('.');
-  /** Barkod PDF'i: yalnızca orijinal sayfalar, paket sırasıyla (içerik değişmez, indirmeden önce doğrulanır) */
-  async function makePdf(list) {
-    const refs = list.flatMap((p) => p.pages.map((i) => read.pageList[i]));
+  // Dosya adı P001, P002… (klasörde sırayla dizilsin; 100'den fazla paket olabilir)
+  const pno = (p) => 'P' + String(p.no).padStart(packets.length >= 100 ? 3 : 2, '0');
+  /** Bir paketin barkod PDF'i: yalnızca o paketin orijinal sayfaları (içerik değişmez, indirmeden önce doğrulanır) */
+  async function makePdf(p, quiet = false) {
+    const refs = p.pages.map((i) => read.pageList[i]);
     const bytes = await buildPdf(read.fileList, refs);
-    const name = list.length === 1 ? `P${list[0].no} - ${asciiName(list[0].label)} - ${stamp()}.pdf` : `Dagitim - ${stamp()} - ${list.length} paket.pdf`;
+    const name = `${pno(p)} - ${asciiName(p.label)}${p.store && p.kind !== 'city' ? ' - ' + asciiName(p.store) : ''} - ${stamp()}.pdf`;
     download(name, new Blob([bytes], { type: 'application/pdf' }));
-    toast(`${name} indirildi — ${n(refs.length)} sayfa, hepsi kaynakla birebir aynı`, 'ok');
+    if (!quiet) toast(`${name} indirildi — ${n(refs.length)} sayfa, kaynakla birebir aynı`, 'ok');
+  }
+  /** Bütün paketler, her biri ayrı dosya, P1'den başlayarak sırayla */
+  async function downloadAll(btn) {
+    for (let i = 0; i < packets.length; i++) {
+      btn.lastChild.textContent = `İndiriliyor… ${i + 1}/${packets.length}`;
+      await makePdf(packets[i], true);
+      await new Promise((r) => setTimeout(r, 350)); // tarayıcı art arda indirmeleri kaçırmasın
+    }
+    toast(`${packets.length} paket ayrı ayrı indirildi (P1–P${packets.length}) — hepsi kaynakla birebir aynı`, 'ok');
   }
   /** Kapak sayfaları: ayrı, yeni bir PDF (barkod PDF'ine eklenmez). Boyut paketin ilk etiketiyle aynı. */
   async function makeCovers(list) {
@@ -273,7 +291,7 @@ export default async function dispatchPage(ctx) {
     }
     download(`Kapaklar - ${stamp()} - ${list.length} paket.pdf`, new Blob([await out.save()], { type: 'application/pdf' }));
   }
-  const asciiName = (s) => { const tr = { ç: 'c', Ç: 'C', ğ: 'g', Ğ: 'G', ı: 'i', İ: 'I', ö: 'o', Ö: 'O', ş: 's', Ş: 'S', ü: 'u', Ü: 'U' }; return s.replace(/[çÇğĞıİöÖşŞüÜ]/g, (c) => tr[c]).normalize('NFKD').replace(/[^\x20-\x7e]/g, '').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80); };
+  const asciiName = (s) => { const tr = { ç: 'c', Ç: 'C', ğ: 'g', Ğ: 'G', ı: 'i', İ: 'I', ö: 'o', Ö: 'O', ş: 's', Ş: 'S', ü: 'u', Ü: 'U' }; return s.replace(/[–—]/g, '-').replace(/[çÇğĞıİöÖşŞüÜ]/g, (c) => tr[c]).normalize('NFKD').replace(/[^\x20-\x7e]/g, '').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 80); };
 
   /** Kapak sayfası (siyah-beyaz, termal yazıcıya uygun) → PNG */
   async function coverPng(p, wPt, hPt, at) {
