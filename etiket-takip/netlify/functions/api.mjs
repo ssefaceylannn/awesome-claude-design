@@ -676,6 +676,45 @@ export default async (req) => {
     if (path === 'orders' && m === 'GET') return await getOrders(url);
     if (path === 'days' && m === 'GET') return json({ days: (await listKeys('day/')).map((k) => k.slice(4)).sort() });
 
+    // ---------------------------------------------------------------- günlük dağıtım (zimmet)
+    // Hangi etiket paketinin (P1, P2…) kime verildiği: dispatch/<tarih> altında, her kayıt bir dağıtım
+    if (path === 'dispatch' && m === 'POST') {
+      need(user, 'admin', 'personel');
+      const b = await body(req);
+      const date = isYmd(b.date) ? b.date : todayTR();
+      const packets = (Array.isArray(b.packets) ? b.packets : []).slice(0, 300).map((p, i) => ({
+        no: int(p && p.no, 1, 9999, i + 1),
+        label: str(p && p.label, 160),
+        kind: ['combo', 'only', 'rest', 'none', 'city', 'other'].includes(p && p.kind) ? p.kind : 'other',
+        assignee: str(p && p.assignee, 60),
+        pages: int(p && p.pages, 0, 100000, 0),
+        orders: (Array.isArray(p && p.orders) ? p.orders : []).slice(0, 5000).map((no) => str(no, 60)).filter(Boolean),
+      })).filter((p) => p.orders.length || p.pages);
+      if (!packets.length) throw new HttpError(400, 'Paket yok');
+      const rec = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: nowIso(), by: user.u, files: (Array.isArray(b.files) ? b.files : []).slice(0, 200).map((f) => str(f, 200)), packets };
+      await update(`dispatch/${date}`, (d) => { const list = Array.isArray(d && d.list) ? d.list : []; list.push(rec); return { list: list.slice(-200) }; }, { list: [] });
+      await audit(user, 'dağıtım', `${date}: ${packets.length} paket — ${packets.map((p) => `P${p.no} ${p.assignee || '?'}`).join(', ').slice(0, 250)}`);
+      return json({ ok: true, id: rec.id, date });
+    }
+    if (path === 'dispatch' && m === 'GET') {
+      // ?date=YYYY-MM-DD → o günün dağıtımları; ?no=… → son 90 günde bu sipariş hangi pakette, kimde
+      const date = url.searchParams.get('date');
+      if (isYmd(date)) return json({ date, list: ((await getJSON(`dispatch/${date}`)) || { list: [] }).list });
+      const no = str(url.searchParams.get('no'), 60).replace(/\s+/g, '');
+      const days = (await listKeys('dispatch/')).map((k) => k.slice(9)).filter(isYmd).sort().reverse().slice(0, 90);
+      const hits = [];
+      const names = new Set();
+      await pmap(days, 8, async (d) => {
+        const rec = await getJSON(`dispatch/${d}`);
+        for (const r of (rec && rec.list) || []) for (const p of r.packets) {
+          if (p.assignee) names.add(p.assignee);
+          if (no && no.length >= 6 && p.orders.some((x) => x === no || (x.length >= 10 && no.length >= 10 && (x.endsWith(no) || no.endsWith(x))))) hits.push({ date: d, at: r.at, by: r.by, no: p.no, label: p.label, assignee: p.assignee, orders: p.orders.length });
+        }
+      });
+      hits.sort((a, b) => b.at.localeCompare(a.at));
+      return json({ hits, names: [...names].sort((a, b) => a.localeCompare(b, 'tr')).slice(0, 200) });
+    }
+
     if (path === 'check' && m === 'POST') {
       const b = await body(req);
       if (!isYmd(b.date) || typeof b.k !== 'string' || !b.k || b.k.length > 200) throw new HttpError(400, 'Eksik bilgi');

@@ -2,7 +2,7 @@
 import { loadScript, collator, today } from './ui.js';
 import { parsePage, combinePages, dateFromFileName } from '../shared/parser.js';
 
-async function pdfjs() {
+export async function pdfjs() {
   await loadScript('/assets/vendor/pdf.min.js');
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/assets/vendor/pdf.worker.min.js';
   return window.pdfjsLib;

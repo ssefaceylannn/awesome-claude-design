@@ -29,6 +29,7 @@ export async function openOrder(o, onChange) {
         <dt>Kargo</dt><dd>${o.cargo || '—'} ${o.cargoCode ? html`<code>${o.cargoCode}</code>` : ''}</dd>
         <dt>Etiket</dt><dd>${o.pages || 1} sayfa · ${o.file || ''}</dd>
         <dt>Yükleyen</dt><dd>${personName(o.by)} · ${trDateTime(o.at)}</dd>
+        <dt>Dağıtım</dt><dd id="dispInfo"><span class="muted">…</span></dd>
         <dt>Barkod kontrolü</dt><dd>${o.checked ? html`<span class="badge ok">${icon('check')} ${personName(o.checkedBy)} · ${trDateTime(o.checkedAt)}</span>` : html`<span class="badge">Kontrol edilmedi</span>`}</dd>
       </dl>
       <div class="card"><table class="t"><thead><tr><th>Etiketteki ürün</th><th class="num">Adet</th><th>Katalogdaki ürün</th><th class="num">Sayılan</th></tr></thead><tbody>
@@ -37,6 +38,15 @@ export async function openOrder(o, onChange) {
       </tbody></table></div>
     </div>`,
     actions,
+    // Günlük Dağıtım kaydı: bu sipariş hangi pakette, kime verildi
+    onOpen: (d) => {
+      const el = d.querySelector('#dispInfo');
+      const no = String(o.no || '').replace(/\s+/g, '');
+      if (no.length < 6) { el.textContent = '—'; return; }
+      api.get('dispatch?no=' + encodeURIComponent(no)).then(({ hits }) => {
+        mount(el, hits.length ? html`${hits.map((h) => html`<div><b>P${h.no}</b> → <b>${h.assignee || 'teslim alan yazılmamış'}</b> <span class="muted">· ${h.label} · ${trDateTime(h.at)}</span></div>`)}` : html`<span class="muted">Dağıtım kaydı yok</span>`);
+      }).catch(() => { el.textContent = '—'; });
+    },
     onSubmit: async (val) => {
       if (val === 'check') {
         const r = await api.post('check', { date: o.date, k: o.k, checked: !o.checked });

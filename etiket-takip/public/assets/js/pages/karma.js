@@ -6,7 +6,8 @@
 //   Şehre göre: alıcı ili seçilen illerden (varsayılan Düzce) olanlar / diğer şehirler (il okunamayanlar dahil)
 // Kural sitede saklanır (yönetici değiştirir); dosyalar bu bilgisayarda işlenir. Siteye kaydetmek için
 // dosyalar Etiket Yükle'ye aktarılır (mükerrer kontrolü orada yapılır).
-import { html, mount, icon, n, toast, busy, storeTag, download, loadScript, personName, multiSelect } from '../core/ui.js';
+import { html, mount, icon, n, toast, busy, storeTag, download, personName, multiSelect } from '../core/ui.js';
+import { buildPdf } from '../core/pdfsplit.js';
 import { state, isAdmin } from '../core/api.js';
 import { readLabels } from '../core/labels.js';
 import { computeOrder } from '../shared/calc.js';
@@ -250,39 +251,18 @@ export default async function karmaPage(ctx) {
     }
   });
 
-  /** Seçilen gruptaki sayfaları kaynak PDF'ten aynen kopyalar (yeniden çizilmez, barkod/sıra değişmez). */
+  /** Seçilen gruptaki sayfalar kaynak PDF'ten aynen kopyalanır (içerik değişmez; indirmeden önce doğrulanır). */
   async function save(grp) {
-    await loadScript('/assets/vendor/pdf-lib.min.js');
-    const { PDFDocument } = window.PDFLib;
     const pg = pageGroups();
-    const out = await PDFDocument.create();
-    const srcs = new Map();
-    // Sayfaları PDF'teki sırayla, ardışık aynı dosyadan gelenleri tek seferde kopyala
-    let run = null;
-    const flush = async () => {
-      if (!run) return;
-      if (!srcs.has(run.fi)) srcs.set(run.fi, await PDFDocument.load(await read.fileList[run.fi].arrayBuffer(), { ignoreEncryption: true }));
-      const copied = await out.copyPages(srcs.get(run.fi), run.idx);
-      for (const p of copied) out.addPage(p);
-      run = null;
-    };
-    for (let i = 0; i < read.pageList.length; i++) {
-      if (pg[i] !== grp) continue;
-      const { fileIndex: fi, filePage } = read.pageList[i];
-      if (run && run.fi !== fi) await flush();
-      if (!run) run = { fi, idx: [] };
-      run.idx.push(filePage - 1);
-    }
-    await flush();
-    if (!out.getPageCount()) throw new Error('Bu grupta sayfa yok');
-    const bytes = await out.save();
+    const refs = read.pageList.filter((_, i) => pg[i] === grp);
+    const bytes = await buildPdf(read.fileList, refs);
     const base = read.fileList.length === 1 ? read.fileList[0].name.replace(/\.pdf$/i, '') : 'Etiketler';
     // Dosya adında Türkçe harf kullanılmaz: bazı tarayıcılar/işletim sistemleri adı bozabiliyor
     const tr = { ç: 'c', Ç: 'C', ğ: 'g', Ğ: 'G', ı: 'i', İ: 'I', ö: 'o', Ö: 'O', ş: 's', Ş: 'S', ü: 'u', Ü: 'U' };
     const name = `${base} - ${gname(grp)}.pdf`.replace(/[çÇğĞıİöÖşŞüÜ]/g, (c) => tr[c])
       .normalize('NFKD').replace(/[^\x20-\x7e]/g, '').replace(/[\\/:*?"<>|]+/g, '-');
     download(name, new Blob([bytes], { type: 'application/pdf' }));
-    toast(`${name} indirildi (${out.getPageCount()} sayfa)`, 'ok');
+    toast(`${name} indirildi (${refs.length} sayfa, kaynakla birebir aynı)`, 'ok');
   }
 
   showMode();
