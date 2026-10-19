@@ -20,7 +20,10 @@ const ST = {
 export default async function uploadPage(ctx) {
   const admin = isAdmin();
   let pending = null; // { read, results }
-  let dateMode = sessionStorage.getItem('et-datemode') || 'file';
+  // Sipariş tarihi seçimi: varsayılan "Bugün"; değiştirilince bu tarayıcıda kalıcı olarak hatırlanır
+  const DATE_MODES = ['file', 'today', 'manual', 'platform'];
+  let dateMode = 'today';
+  try { const v = localStorage.getItem('et-datemode'); if (DATE_MODES.includes(v)) dateMode = v; } catch { /* yok */ }
   let manualDate = today();
   let statusFilter = 'all';
 
@@ -49,7 +52,7 @@ export default async function uploadPage(ctx) {
   $('#dateMode').value = dateMode;
   const syncDate = () => { $('#mdWrap').classList.toggle('hidden', dateMode !== 'manual'); };
   syncDate();
-  $('#dateMode').addEventListener('change', (e) => { dateMode = e.target.value; sessionStorage.setItem('et-datemode', dateMode); syncDate(); });
+  $('#dateMode').addEventListener('change', (e) => { dateMode = e.target.value; try { localStorage.setItem('et-datemode', dateMode); } catch { /* yok */ } syncDate(); });
   $('#md').addEventListener('change', (e) => { manualDate = e.target.value || today(); });
   const drop = $('#drop');
   $('#file').addEventListener('change', (e) => { handle([...e.target.files]); e.target.value = ''; });
