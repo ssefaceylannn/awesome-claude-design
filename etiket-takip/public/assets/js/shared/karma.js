@@ -7,6 +7,8 @@
 import { fold } from './text.js';
 import { provinceOf } from './cities.js';
 
+// Karma ayırmanın varsayılan olarak yapıldığı mağazalar (kural kaydedilene kadar)
+export const DEFAULT_KARMA_STORES = ['Momordica İkas', 'Momordica Trendyol', 'Daily Organics Trendyol'];
 export const DEFAULT_KARMA = { cats: ['İçecek & Mix'], productIds: [], names: { only: 'Sadece Şişe', rest: 'Kutulu', none: 'Şişesiz' }, third: false, cities: ['Düzce'] };
 
 /** Sunucudaki ayar (eksik alanlar varsayılanla) */
@@ -19,7 +21,15 @@ export function karmaRule(k) {
     names: { only: names.only || d.names.only, rest: names.rest || d.names.rest, none: names.none || d.names.none },
     third: !!(k && k.third),
     cities: Array.isArray(k && k.cities) ? k.cities : d.cities,
+    storeIds: Array.isArray(k && k.storeIds) ? k.storeIds : null,
   };
+}
+/** Kuraldaki mağazalar; seçilmemişse (null) varsayılan adlarla eşleşen mağazalar */
+export function karmaStoreIds(rule, stores) {
+  if (Array.isArray(rule.storeIds)) return rule.storeIds;
+  const key = (s) => fold(s).replace(/[^a-z0-9]/g, '');
+  const want = new Set(DEFAULT_KARMA_STORES.map(key));
+  return (stores || []).filter((s) => want.has(key(s.name))).map((s) => s.id);
 }
 
 const inSel = (rule, ctx) => {

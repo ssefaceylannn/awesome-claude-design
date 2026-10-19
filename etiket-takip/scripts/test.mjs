@@ -124,6 +124,19 @@ await test('Karma ayıklama: kategori + ürün seçimi; yalnızca seçilenler �
   const R3 = analyzeCombos(computed, ctx, { min: 10, karmaRule: { ...rule, third: true } });
   assert.deepEqual(R3.karma.split.map((x) => [x.key, x.orders, x.units]), [['only', 2, 5], ['rest', 2, 3], ['none', 1, 1]]);
   assert.equal(analyzeCombos(computed, ctx, { min: 10 }).karma.split, null);
+  // Mağaza seçimi: yalnızca seçilen mağazanın karması ayrılır, diğerininki "plain" (tek satır) kalır
+  const { karmaStoreIds } = await import('../public/assets/js/shared/karma.js');
+  const stores = [{ id: 'mt', name: 'Momordica Trendyol', platform: 'trendyol', senders: ['Momordica Trendyol'] }, { id: 'un', name: 'Ultra Natura Trendyol', platform: 'trendyol', senders: ['Ultra Natura Trendyol'] },
+    { id: 'mi', name: 'Momordica İkas', platform: 'ikas', senders: [] }, { id: 'do', name: 'Daily Organics Trendyol', platform: 'trendyol', senders: [] }];
+  assert.deepEqual(karmaStoreIds(karmaRule({}), stores), ['mt', 'mi', 'do']); // varsayılan üç mağaza
+  assert.deepEqual(karmaStoreIds(karmaRule({ storeIds: ['un'] }), stores), ['un']);
+  const sctx = createContext({ products: ps, stores, campaigns: [], aliases: {}, settings: {} });
+  const so = (k, sender, items) => computeOrder({ k, sender, items }, sctx);
+  const sc = [so('1', 'Momordica Trendyol', [{ name: 'Coconut Mix', qty: 1 }]), so('2', 'Ultra Natura Trendyol', [{ name: 'Coconut Mix', qty: 1 }]),
+    so('3', 'Momordica Trendyol', [{ name: 'Coconut Mix', qty: 1 }, { name: 'Zencefil Shot', qty: 1 }]), so('4', 'Ultra Natura Trendyol', [{ name: 'Zencefil Shot', qty: 2 }])];
+  const RS = analyzeCombos(sc, sctx, { min: 10, karmaRule: { ...rule, storeIds: ['mt'] } });
+  assert.deepEqual(RS.karma.split.map((x) => [x.key, x.orders]), [['only', 1], ['rest', 1], ['plain', 2]]);
+  assert.equal(RS.karma.split.reduce((s2, x) => s2 + x.orders, 0), RS.karma.orders);
 });
 
 await test('Şehre göre ayırma: etiketteki "İLÇE / İL" metninden il bulunur; seçilen il (varsayılan Düzce) ayrılır, okunamayan diğerlerinde kalır', async () => {

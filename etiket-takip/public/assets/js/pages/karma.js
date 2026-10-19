@@ -52,6 +52,7 @@ export default async function karmaPage(ctx) {
               : html`<span class="muted small">Katalogda kategori yok — <a href="#/products">Ürünler & Sıra</a> sayfasından ürünlere kategori verin.</span>`}
           </div></div>
           <div class="f">Ürünler <span class="hint">kategoriden bağımsız tek tek de seçilebilir; seçilen kategorilere ek olarak sayılır</span><div id="prods" style="max-width:520px;margin-top:6px"></div></div>
+          <div class="f">Karma ayırma yapılacak mağazalar <span class="hint">Günlük Dağıtım ve Kombinasyon Analizi yalnızca bu mağazaların karmasını ayırır; diğerlerinin karması tek paket kalır</span><div id="kstores" style="max-width:520px;margin-top:6px"></div></div>
           <div class="row wrap" style="gap:12px;align-items:flex-end">
             <label class="f">1. grup adı <span class="hint">yalnızca seçilenler</span><input class="input" data-name="only" maxlength="40" value="${rule.names.only}" style="width:200px"></label>
             <label class="f">2. grup adı <span class="hint">seçilen + seçim dışı</span><input class="input" data-name="rest" maxlength="40" value="${rule.names.rest}" style="width:200px"></label>
@@ -97,6 +98,8 @@ export default async function karmaPage(ctx) {
   const prodOpts = active.map((p) => ({ id: p.id, label: state.ctx.labelOf(p), group: p.category || 'Kategorisiz' }))
     .sort((a, b) => (a.group === 'Kategorisiz') - (b.group === 'Kategorisiz') || a.group.localeCompare(b.group, 'tr') || a.label.localeCompare(b.label, 'tr'));
   multiSelect($('#prods'), { options: prodOpts, selected: rule.productIds.filter((id) => state.ctx.productsById.has(id)), allLabel: 'Ürün seçilmedi', onChange: (v) => { rule.productIds = v; changed(); } });
+  const storeOpts = state.config.stores.filter((st) => st.active !== false).map((st) => ({ id: st.id, label: st.name, color: st.color }));
+  multiSelect($('#kstores'), { options: storeOpts, selected: rule.storeIds, allLabel: 'Mağaza seçilmedi', onChange: (v) => { rule.storeIds = storeOpts.map((o) => o.id).filter((x) => v.includes(x)); changed(); } });
   multiSelect($('#cities'), { options: PROVINCES.map((p) => ({ id: p, label: p })), selected: rule.cities.filter((c) => PROVINCES.includes(c)), allLabel: 'İl seçilmedi', onChange: (v) => { rule.cities = PROVINCES.filter((p) => v.includes(p)); changed(); } });
   function drawRuleBar() {
     if (mode === 'city') {
@@ -125,7 +128,8 @@ export default async function karmaPage(ctx) {
     if (!b) return;
     busy(b, true, 'Kaydediliyor…');
     try {
-      await saveKarma(rule, `ayıklama kuralı: ${[...rule.cats, ...rule.productIds.map(pname)].join(', ') || 'ürün seçimi boş'}${rule.third ? ' · 3. grup açık' : ''} · il: ${rule.cities.join(', ') || '—'}`);
+      const sname = (sid) => (state.config.stores.find((st) => st.id === sid) || {}).name || sid;
+      await saveKarma(rule, `ayıklama kuralı: ${[...rule.cats, ...rule.productIds.map(pname)].join(', ') || 'ürün seçimi boş'}${rule.third ? ' · 3. grup açık' : ''} · mağazalar: ${rule.storeIds.map(sname).join(', ') || '—'} · il: ${rule.cities.join(', ') || '—'}`);
       saved = karmaPref(); rule = structuredClone(saved);
       toast('Kural kaydedildi', 'ok'); drawRuleBar();
     } catch (err) { toast(err.message, 'err'); busy(b, false); }

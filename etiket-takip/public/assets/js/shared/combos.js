@@ -38,7 +38,9 @@ export function comboOf(c, ctx, { includeRewards = false } = {}) {
  * @param computed computeOrder() sonuçları (arşiv özetleri hariç tutulmalı)
  * @returns {{ groups, karma, orders }} groups: en az `min` siparişli bileşimler (çoktan aza);
  *   karma: { orders, units, groups (karmaya düşen bileşimler), products (ürün toplamları),
- *            split: karmaRule verilirse [{ key:'only'|'rest'|'none', orders, units, groups }] (Sadece Şişe / Kutulu / Şişesiz) }
+ *            split: karmaRule verilirse [{ key:'only'|'rest'|'none'|'plain', orders, units, groups }] (Sadece Şişe / Kutulu /
+ *            Şişesiz; 'plain' = karma ayırması yapılmayan mağazaların karması). karmaRule.storeIds dizi ise yalnızca o
+ *            mağazaların siparişleri ayrılır }
  */
 export function analyzeCombos(computed, ctx, { min = 10, includeRewards = false, karmaRule = null } = {}) {
   const by = new Map();
@@ -47,9 +49,10 @@ export function analyzeCombos(computed, ctx, { min = 10, includeRewards = false,
     const cb = comboOf(c, ctx, { includeRewards });
     if (!cb.parts.length) continue;
     orders++;
-    const g = by.get(cb.key) || { ...cb, orders: 0, refs: [] };
+    const g = by.get(cb.key) || { ...cb, orders: 0, refs: [], cs: [] };
     g.orders++;
     g.refs.push(c.order);
+    g.cs.push(c);
     by.set(cb.key, g);
   }
   const all = [...by.values()].sort((a, b) => b.orders - a.orders || a.label.localeCompare(b.label, 'tr'));
@@ -63,14 +66,20 @@ export function analyzeCombos(computed, ctx, { min = 10, includeRewards = false,
   }
   let split = null;
   if (karmaRule) {
-    split = GROUPS.filter((k) => k !== 'none' || karmaRule.third).map((key) => ({ key, orders: 0, units: 0, groups: [] }));
+    split = [...GROUPS.filter((k) => k !== 'none' || karmaRule.third), 'plain'].map((key) => ({ key, orders: 0, units: 0, groups: [] }));
+    const only = Array.isArray(karmaRule.storeIds) ? new Set(karmaRule.storeIds) : null;
     for (const g of small) {
-      const key = groupOfKind(kindOfIds(g.parts.map((p) => p.id), ctx, karmaRule), karmaRule);
-      const part = split.find((x) => x.key === key);
-      part.orders += g.orders;
-      part.units += g.units * g.orders;
-      part.groups.push(g);
+      const kind = groupOfKind(kindOfIds(g.parts.map((p) => p.id), ctx, karmaRule), karmaRule);
+      const per = new Map(); // grup anahtarı → bu bileşimden kaç sipariş
+      for (const c of g.cs) { const key = !only || (c.store && only.has(c.store.id)) ? kind : 'plain'; per.set(key, (per.get(key) || 0) + 1); }
+      for (const [key, cnt] of per) {
+        const part = split.find((x) => x.key === key);
+        part.orders += cnt;
+        part.units += g.units * cnt;
+        part.groups.push(cnt === g.orders ? g : { ...g, orders: cnt });
+      }
     }
+    split = split.filter((x) => x.key !== 'plain' || x.orders);
   }
   return {
     orders,

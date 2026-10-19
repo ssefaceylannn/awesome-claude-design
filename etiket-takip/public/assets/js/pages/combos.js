@@ -9,7 +9,7 @@ import { analyzeCombos, parseComboPaste, KARMA } from '../shared/combos.js';
 import { rangePicker, storeFilters, filterLabel } from '../core/widgets.js';
 import { exportTable } from '../core/excel.js';
 import { paperById, paperPicker } from '../core/paper.js';
-import { karmaPref, karmaLabel, karmaSplitOn, setKarmaSplit } from '../core/karmapref.js';
+import { karmaPref, karmaLabel, karmaName, karmaSplitOn, setKarmaSplit } from '../core/karmapref.js';
 
 const PREF = 'et-combos';
 const loadPref = () => { try { return JSON.parse(localStorage.getItem(PREF) || '{}'); } catch { return {}; } };
@@ -161,7 +161,7 @@ export default async function combosPage(ctx) {
       <div class="kpis">
         <div class="kpi"><div class="l">${icon('receipt')}Sipariş</div><div class="v">${n(R.orders)}</div><div class="s">${n(R.groups.length + R.karma.groups.length)} farklı bileşim${again ? ` · ${n(again)} yeniden yüklenen dahil` : ''}</div></div>
         <div class="kpi hl"><div class="l">${icon('box')}${min}+ siparişli bileşim</div><div class="v">${n(R.groups.length)}</div><div class="s">${n(inGroups)} sipariş</div></div>
-        <div class="kpi"><div class="l">${icon('copy')}${KARMA}</div><div class="v">${n(R.karma.orders)}</div><div class="s">${R.karma.split ? R.karma.split.map((x) => `${kp.names[x.key]} ${n(x.orders)}`).join(' · ') : `${n(R.karma.groups.length)} bileşim · ${n(R.karma.units)} ürün`}</div></div>
+        <div class="kpi"><div class="l">${icon('copy')}${KARMA}</div><div class="v">${n(R.karma.orders)}</div><div class="s">${R.karma.split ? R.karma.split.map((x) => `${karmaName(x.key, kp)} ${n(x.orders)}`).join(' · ') : `${n(R.karma.groups.length)} bileşim · ${n(R.karma.units)} ürün`}</div></div>
       </div>
       ${unm ? html`<div class="callout warn">${icon('alert')}<div class="c"><b>Eşleşmeyen ürün adı içeren bileşimler var (⚠)</b><a href="#/matching">Ürün Eşleştirme</a> sayfasından atayınca analiz kendiliğinden düzelir.</div></div>` : ''}
       <div class="card"><div class="tw"><table class="t"><thead><tr><th>Kombinasyon</th><th class="num">Sipariş</th><th class="num">Toplam ürün</th></tr></thead><tbody>

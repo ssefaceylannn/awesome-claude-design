@@ -168,6 +168,8 @@ const SANITIZE = {
       third: !!(k && k.third),
       // Şehre göre ayırma: seçilen iller (etiketteki alıcı adresinin ili)
       cities: Array.isArray(k && k.cities) ? [...new Set(k.cities.map((c) => str(c, 40)).filter(Boolean))].slice(0, 81) : d.cities,
+      // Karma ayırmanın yapılacağı mağazalar (null = henüz seçilmedi → varsayılan mağaza adları)
+      storeIds: Array.isArray(k && k.storeIds) ? [...new Set(k.storeIds.filter(id))].slice(0, 200) : null,
     };
   },
   settings: (s) => ({
@@ -685,7 +687,7 @@ export default async (req) => {
       const packets = (Array.isArray(b.packets) ? b.packets : []).slice(0, 999).map((p, i) => ({
         no: int(p && p.no, 1, 9999, i + 1),
         label: str(p && p.label, 160),
-        kind: ['combo', 'only', 'rest', 'none', 'city', 'other'].includes(p && p.kind) ? p.kind : 'other',
+        kind: ['combo', 'only', 'rest', 'none', 'karma', 'city', 'other'].includes(p && p.kind) ? p.kind : 'other',
         assignee: str(p && p.assignee, 60),
         pages: int(p && p.pages, 0, 100000, 0),
         orders: (Array.isArray(p && p.orders) ? p.orders : []).slice(0, 5000).map((no) => str(no, 60)).filter(Boolean),

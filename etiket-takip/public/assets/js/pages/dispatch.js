@@ -21,6 +21,9 @@ export default async function dispatchPage(ctx) {
   let read = null; // readLabels sonucu
   let packets = []; // { no, kind, label, store, pages:[pageIdx], orders:[row], assignee }
   let dupPackets = []; // tekrar eden dosyalar (indirilmez)
+  // Çıktı: 'separate' = her paket ayrı PDF, 'combined' = tek PDF (P1'den sırayla) — bu tarayıcıda hatırlanır
+  let outMode = 'separate';
+  try { if (localStorage.getItem('et-dispatch-out') === 'combined') outMode = 'combined'; } catch { /* yok */ }
   let dry = null; // { new, dup, merge, error } kayıt öncesi kontrol
   let savedId = null; // kaydedildiyse dağıtım kaydı
   let savedSig = ''; // kaydedilen teslim alanlar (sonradan değişirse dağıtım kaydı yenilenir)
@@ -142,12 +145,17 @@ export default async function dispatchPage(ctx) {
         add('combo', rest[0] ? rest[0].combo.label : F.f.name.replace(/\.pdf$/i, ''), rest, F.fi, loose);
         continue;
       }
+      // Karma ayırma yalnızca kuraldaki mağazalarda; diğer mağazaların karması tek paket ("Karma")
+      const splitStores = new Set(rule.storeIds);
+      const plain = rest.filter((r) => !(r.c.store && splitStores.has(r.c.store.id)));
+      const sp = rest.filter((r) => !plain.includes(r));
+      if (!sp.length) { add('karma', 'Karma', rest, F.fi, loose); continue; }
       const g = { only: [], rest: [], none: [] };
-      for (const r of rest) g[r.o.orphan ? 'rest' : classifyOrder(r.c, state.ctx, rule).group].push(r);
+      for (const r of sp) g[r.o.orphan ? 'rest' : classifyOrder(r.c, state.ctx, rule).group].push(r);
       add('only', `Karma – ${rule.names.only}`, g.only, F.fi);
-      const pr = add('rest', `Karma – ${rule.names.rest}`, g.rest, F.fi, loose);
-      if (!pr && loose.length) add('rest', `Karma – ${rule.names.rest}`, [], F.fi, loose);
+      add('rest', `Karma – ${rule.names.rest}`, g.rest, F.fi, loose);
       add('none', `Karma – ${rule.names.none}`, g.none, F.fi);
+      add('karma', 'Karma (ayrılmayan mağaza)', plain, F.fi);
     }
     for (let i = 0; i < owner.length; i++) if (owner[i]) owner[i].pages.push(i);
     // Önceki seçilen kişiler (aynı dosya + tür) korunur
@@ -160,13 +168,13 @@ export default async function dispatchPage(ctx) {
     packets = out.filter((p) => !isDup(p)).map((p, i) => ({ ...p, no: i + 1, assignee: prev.get(`${p.kind}|${p.fi}`) || p.assignee }));
   }
 
-  const KIND_BADGE = { combo: '', only: 'ok', rest: 'warn', none: 'info', city: 'err' };
+  const KIND_BADGE = { combo: '', only: 'ok', rest: 'warn', none: 'info', karma: '', city: 'err' };
   function render() {
     if (!read) return mount($('#out'), '');
     const total = packets.reduce((s, p) => s + p.pages.length, 0);
     const dupPages = dupPackets.reduce((s, p) => s + p.pages.length, 0);
     const dupLog = read.log.filter((l) => l.type === 'dup');
-    const unmatched = packets.filter((p) => p.kind !== 'combo' && p.kind !== 'city').flatMap((p) => p.orders).filter((r) => r.c.lines.some((l) => !l.ignored && l.units && !l.productId));
+    const unmatched = packets.filter((p) => ['only', 'rest', 'none'].includes(p.kind)).flatMap((p) => p.orders).filter((r) => r.c.lines.some((l) => !l.ignored && l.units && !l.productId));
     const nocity = packets.flatMap((p) => p.orders).filter((r) => r.city.kind === 'nocity');
     const warns = read.log.filter((l) => l.type === 'error' || l.type === 'warn' || l.type === 'dup');
     mount($('#out'), html`<div class="stack">
@@ -194,9 +202,13 @@ export default async function dispatchPage(ctx) {
         <div class="card-f row wrap" style="gap:8px">
           <span class="muted small">${savedId ? html`${icon('check')} Kaydedildi — paketler ve teslim alanlar kayıtlı.` : 'Kaydedince siparişler siteye eklenir ve hangi paketin kime verildiği kaydedilir.'}</span>
           <span class="spacer"></span>
+          <div class="row wrap" role="group" aria-label="PDF çıktısı" style="gap:12px">
+            <label class="check small"><input type="radio" name="outMode" value="separate" ${outMode === 'separate' ? 'checked' : ''}> Ayrı ayrı (her paket bir PDF)</label>
+            <label class="check small"><input type="radio" name="outMode" value="combined" ${outMode === 'combined' ? 'checked' : ''}> Toplu (tek PDF, P1'den sırayla)</label>
+          </div>
           <button class="btn" id="list">${icon('printer')}Zimmet listesi (A4)</button>
           <button class="btn" id="covers" title="Her paket için bir kapak sayfası (paket no, içerik, teslim alan, imza) — barkod PDF'inden ayrı dosya">${icon('file')}Kapak sayfaları (ayrı PDF)</button>
-          <button class="btn primary" id="go">${icon('download')}${savedId ? `${packets.length} paketi tekrar indir` : `Kaydet ve ${packets.length} paketi indir`}</button>
+          <button class="btn primary" id="go">${icon('download')}${savedId ? 'Tekrar indir' : 'Kaydet ve indir'}${outMode === 'combined' ? ' (tek PDF)' : ` (${packets.length} PDF)`}</button>
         </div></div>
     </div>`);
   }
@@ -206,6 +218,12 @@ export default async function dispatchPage(ctx) {
     return sumCache.get(p);
   }
 
+  $('#out').addEventListener('change', (e) => {
+    if (e.target.name !== 'outMode') return;
+    outMode = e.target.value;
+    try { localStorage.setItem('et-dispatch-out', outMode); } catch { /* yok */ }
+    render();
+  });
   $('#out').addEventListener('input', (e) => { const i = e.target.dataset.as; if (i != null) packets[+i].assignee = e.target.value.trim(); });
   $('#out').addEventListener('click', async (e) => {
     const one = e.target.closest('[data-one]');
@@ -266,8 +284,17 @@ export default async function dispatchPage(ctx) {
     download(name, new Blob([bytes], { type: 'application/pdf' }));
     if (!quiet) toast(`${name} indirildi — ${n(refs.length)} sayfa, kaynakla birebir aynı`, 'ok');
   }
-  /** Bütün paketler, her biri ayrı dosya, P1'den başlayarak sırayla */
+  /** Bütün paketler: ayrı ayrı (her biri bir dosya) ya da toplu (tek dosya), P1'den başlayarak sırayla */
   async function downloadAll(btn) {
+    if (outMode === 'combined') {
+      btn.lastChild.textContent = 'Hazırlanıyor…';
+      const refs = packets.flatMap((p) => p.pages.map((i) => read.pageList[i]));
+      const bytes = await buildPdf(read.fileList, refs);
+      const name = `Dagitim - ${stamp()} - ${packets.length} paket (P1-P${packets.length}).pdf`;
+      download(name, new Blob([bytes], { type: 'application/pdf' }));
+      toast(`${name} indirildi — ${n(refs.length)} sayfa, hepsi kaynakla birebir aynı`, 'ok');
+      return;
+    }
     for (let i = 0; i < packets.length; i++) {
       btn.lastChild.textContent = `İndiriliyor… ${i + 1}/${packets.length}`;
       await makePdf(packets[i], true);
