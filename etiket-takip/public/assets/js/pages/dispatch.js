@@ -7,6 +7,7 @@
 // önce kaynakla tek tek karşılaştırılır (core/pdfsplit.js). Kapak sayfaları barkod PDF'ine KONMAZ, ayrı dosyadır.
 import { html, mount, icon, n, toast, busy, download, loadScript, today, trDate, trDateTime, personName, emptyState } from '../core/ui.js';
 import { buildPdf } from '../core/pdfsplit.js';
+import { printPdf } from '../core/pdfprint.js';
 import { api, state, invalidateOrders } from '../core/api.js';
 import { readLabels } from '../core/labels.js';
 import { computeOrder } from '../shared/calc.js';
@@ -213,7 +214,7 @@ export default async function dispatchPage(ctx) {
               ${p.kind !== 'combo' ? html`<div class="muted xs">${summary(p).slice(0, 4).map((g) => `${g.label} (${g.orders})`).join(' · ')}${summary(p).length > 4 ? ` · +${summary(p).length - 4} bileşim` : ''}</div>` : html`<div class="muted xs">${read.fileList[p.fi].name}</div>`}</td>
             <td class="num big">${n(p.orders.length)}</td><td class="num">${n(p.pages.length)}</td>
             <td><input class="input sm" data-as="${i}" list="dispatchNames" value="${p.assignee}" placeholder="Ad Soyad" maxlength="60" style="width:170px"></td>
-            <td class="nowrap"><button class="btn sm ghost" data-one="${i}" title="Yalnızca bu paketin PDF'i (P${p.no})">${icon('download')}</button></td></tr>`)}
+            <td class="nowrap"><button class="btn sm ghost" data-print="${i}" title="P${p.no} paketini yazdır (dosya açmadan)">${icon('printer')}</button><button class="btn sm ghost" data-one="${i}" title="Yalnızca bu paketin PDF'i (P${p.no})">${icon('download')}</button></td></tr>`)}
         </tbody></table></div>
         <div class="card-f row wrap" style="gap:8px">
           <span class="muted small">${savedId ? html`${icon('check')} Kaydedildi — paketler ve teslim alanlar kayıtlı.` : 'Kaydedince siparişler siteye eklenir ve hangi paketin kime verildiği kaydedilir.'}</span>
@@ -224,6 +225,7 @@ export default async function dispatchPage(ctx) {
           </div>
           <button class="btn" id="list">${icon('printer')}Zimmet listesi (A4)</button>
           <button class="btn" id="covers" title="Her paket için bir kapak sayfası (paket no, içerik, teslim alan, imza) — barkod PDF'inden ayrı dosya">${icon('file')}Kapak sayfaları (ayrı PDF)</button>
+          <button class="btn" id="printAll" title="Bütün paketler tek yazdırma işinde, P1'den sırayla (dosya açmadan)">${icon('printer')}Hepsini yazdır</button>
           <button class="btn primary" id="go">${icon('download')}${savedId ? 'Tekrar indir' : 'Kaydet ve indir'}${outMode === 'combined' ? ' (tek PDF)' : ` (${packets.length} PDF)`}</button>
         </div></div>
     </div>`);
@@ -245,6 +247,20 @@ export default async function dispatchPage(ctx) {
     const one = e.target.closest('[data-one]');
     if (one) { busy(one, true, ''); try { await makePdf(packets[+one.dataset.one]); } catch (err) { toast(err.message, 'err'); } busy(one, false); return; }
     if (e.target.closest('#list')) return printList();
+    // Doğrudan yazdır: önce kayıt (yapılmadıysa), sonra doğrulanmış PDF yazıcıya — dosya açmaya gerek yok
+    const pr = e.target.closest('[data-print], #printAll');
+    if (pr) {
+      busy(pr, true, pr.id ? 'Hazırlanıyor…' : '');
+      try {
+        if (!savedId) await saveAll(pr.id ? pr : $('#go'));
+        else if (sig() !== savedSig) await saveDispatch();
+        const list = pr.id ? packets : [packets[+pr.dataset.print]];
+        const bytes = await buildPdf(read.fileList, list.flatMap((p) => p.pages.map((i) => read.pageList[i])));
+        await printPdf(bytes, { onProgress: (d, t) => { if (pr.id) pr.lastChild.textContent = `Hazırlanıyor… ${d}/${t}`; } });
+      } catch (err) { toast(err.message, 'err'); }
+      busy(pr, false);
+      return render();
+    }
     const cv = e.target.closest('#covers');
     if (cv) {
       busy(cv, true, 'Hazırlanıyor…');

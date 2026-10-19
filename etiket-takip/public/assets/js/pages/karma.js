@@ -8,6 +8,7 @@
 // dosyalar Etiket Yükle'ye aktarılır (mükerrer kontrolü orada yapılır).
 import { html, mount, icon, n, toast, busy, storeTag, download, personName, multiSelect } from '../core/ui.js';
 import { buildPdf } from '../core/pdfsplit.js';
+import { printPdf } from '../core/pdfprint.js';
 import { state, isAdmin } from '../core/api.js';
 import { readLabels } from '../core/labels.js';
 import { computeOrder } from '../shared/calc.js';
@@ -210,7 +211,7 @@ export default async function karmaPage(ctx) {
         <div class="kpi"><div class="l">${icon('file')}Okunan</div><div class="v">${n(rows.length)}</div><div class="s">sipariş · ${n(read.pageList.length)} sayfa · ${n(read.fileList.length)} dosya</div>
           <button class="btn sm" id="toSite" style="margin-top:8px" title="Dosyaları Etiket Yükle sayfasına aktarır; daha önce kaydedilmiş siparişler orada mükerrer olarak gösterilir">${icon('upload')}Siteye kaydet</button></div>
         ${G.map((g, gi) => html`<div class="kpi ${gi === 0 ? 'hl' : ''}"><div class="l">${icon(KPI_ICON[g])}${gname(g)}</div><div class="v">${n(cnt(g))}</div><div class="s">${n(pages(g))} sayfa · ${sub[g]}</div>
-          <button class="btn sm ${gi === 0 ? 'primary' : ''}" data-dl="${g}" style="margin-top:8px" ${pages(g) ? '' : 'disabled'}>${icon('download')}PDF indir</button></div>`)}
+          <div class="row" style="gap:6px;margin-top:8px"><button class="btn sm ${gi === 0 ? 'primary' : ''}" data-dl="${g}" ${pages(g) ? '' : 'disabled'}>${icon('download')}PDF indir</button><button class="btn sm" data-pr="${g}" ${pages(g) ? '' : 'disabled'} title="Dosya açmadan doğrudan yazdır">${icon('printer')}Yazdır</button></div></div>`)}
       </div>
       ${empty ? html`<div class="callout warn">${icon('alert')}<div class="c"><b>${mode === 'city' ? 'İl seçilmedi' : 'Kategori ya da ürün seçilmedi'}</b>Yukarıdan seçim yapın; seçilmezse hiçbir sipariş ayrılmaz.</div></div>` : ''}
       <div class="callout info">${icon('info')}<div class="c"><b>${gname(rest)} grubunda neler var</b>${Object.entries(kinds).map(([k, v]) => `${kindLabel(k)}: ${n(v)}`).join(' · ') || '—'}${loose ? ` · sipariş dışı sayfa (mükerrer/okunamayan): ${n(loose)}` : ''}. Her sayfa dosyalardan yalnızca birinde, PDF'teki sırasıyla yer alır; toplam ${G.map((g) => n(pages(g))).join(' + ')} = ${n(read.pageList.length)} sayfa.</div></div>
@@ -246,6 +247,13 @@ export default async function karmaPage(ctx) {
       handOff(read.fileList);
       toast('Dosyalar Etiket Yükle sayfasına aktarıldı — daha önce kaydedilenler orada mükerrer olarak gösterilir', 'ok');
       return ctx.navigate('upload');
+    }
+    const pr = e.target.closest('[data-pr]');
+    if (pr) {
+      busy(pr, true, '');
+      try { const pg = pageGroups(); await printPdf(await buildPdf(read.fileList, read.pageList.filter((_, i) => pg[i] === pr.dataset.pr))); } catch (err) { toast(err.message, 'err'); }
+      busy(pr, false);
+      return;
     }
     const dl = e.target.closest('[data-dl]');
     if (dl) {
