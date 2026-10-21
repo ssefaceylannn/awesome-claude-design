@@ -759,3 +759,10 @@ a { color: var(--brand); }
 .sheet-wrap { background: var(--surface-3); border-radius: 12px; padding: 14px; overflow: auto; max-height: 62vh; }
 .sheet { background: #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, .18); box-sizing: border-box; overflow: hidden; margin: 0 auto; }
 button.badge { border: 0; font-family: inherit; cursor: pointer; }
+/* Genel bakış: günlük iş akışı */
+.flow { display: grid; gap: 10px; }
+.flow-step { display: flex; align-items: center; gap: 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.flow-no { flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; background: var(--brand); color: #1a1405; }
+.flow-c { flex: 1; min-width: 0; }
+.flow-step .btn { flex: none; }
+@media (max-width: 700px) { .flow-step { flex-wrap: wrap; } .flow-step .btn { width: 100%; justify-content: center; } }

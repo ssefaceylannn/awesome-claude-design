@@ -282,9 +282,12 @@ export default async function uploadPage(ctx) {
       pending = null;
       mount($('#preview'), html`<div class="callout ok">${icon('check')}<div class="c"><b>${n(r.counts.new)} yeni sipariş kaydedildi</b>
         ${n(r.counts.dup)} mükerrer etiket hesaba katılmadı${r.counts.merge ? `, ${n(r.counts.merge)} devam etiketi mevcut siparişlere eklendi` : ''}${r.counts.fix ? `, ${n(r.counts.fix)} siparişin ürünleri düzeltildi` : ''}.
-        <div class="row wrap" style="margin-top:10px">${dates.length ? html`<button class="btn primary sm" id="goProd">${icon('factory')}Üretim listesini aç</button>` : ''}<button class="btn sm" id="again">Yeni yükleme</button></div></div></div>`);
+        <div class="row wrap" style="margin-top:10px">${dates.length ? html`<button class="btn primary sm" id="goCombo">${icon('copy')}Bu yüklemenin kombinasyon listesini aç</button><button class="btn sm" id="goProd">${icon('factory')}Üretim listesini aç</button>` : ''}<button class="btn sm" id="again">Yeni yükleme</button></div></div></div>`);
       const gp = $('#goProd');
       if (gp) gp.addEventListener('click', () => { setRange(dates[0], dates[dates.length - 1]); ctx.navigate('production'); });
+      // Kombinasyon Analizi bu yükleme seçili açılır (yalnızca bu yüklemedeki yeni siparişler)
+      const gc = $('#goCombo');
+      if (gc && r.batchId) gc.addEventListener('click', () => { setRange(dates[0], today()); ctx.navigate('combos', { batch: r.batchId }); });
       $('#again').addEventListener('click', () => mount($('#preview'), ''));
       toast('Kayıt tamamlandı', 'ok');
       loadHistory();
@@ -305,9 +308,14 @@ export default async function uploadPage(ctx) {
           <td class="small">${b.files.slice(0, 3).map((f) => html`<div>${f}</div>`)}${b.files.length > 3 ? html`<div class="muted">+${b.files.length - 3} dosya</div>` : ''}</td>
           <td class="small nowrap">${b.dates.length ? rangeLabel(b.dates[0], b.dates[b.dates.length - 1]) : '—'}</td>
           <td class="num"><b>${n(b.counts.new)}</b></td><td class="num">${n(b.counts.dup)}</td><td class="num">${n(b.counts.merge)}</td><td class="num">${n(b.units)}</td>
-          <td class="num nowrap">${b.dates.length ? html`<button class="btn sm ghost" data-open="${b.dates[0]}|${b.dates[b.dates.length - 1]}" data-batch="${b.id}" title="Bu yüklemenin üretim listesi">Rapor</button>` : ''}${admin && b.orderCount ? html`<button class="btn sm ghost icon danger" data-undo="${b.id}" data-n="${b.orderCount}" title="Bu yüklemeyi geri al">${icon('trash')}</button>` : ''}</td></tr>`)}
+          <td class="num nowrap">${b.dates.length ? html`<button class="btn sm ghost" data-combo="${b.dates[0]}|${b.dates[b.dates.length - 1]}" data-batch="${b.id}" title="Bu yüklemenin kombinasyon listesi (yalnızca yeni siparişler)">Kombinasyon</button><button class="btn sm ghost" data-open="${b.dates[0]}|${b.dates[b.dates.length - 1]}" data-batch="${b.id}" title="Bu yüklemenin üretim listesi">Rapor</button>` : ''}${admin && b.orderCount ? html`<button class="btn sm ghost icon danger" data-undo="${b.id}" data-n="${b.orderCount}" title="Bu yüklemeyi geri al">${icon('trash')}</button>` : ''}</td></tr>`)}
         </tbody></table></div>${admin ? bulkBar() : ''}` : emptyState('history', 'Henüz yükleme yapılmadı', ''));
       // Rapor: yalnızca bu yüklemenin siparişleriyle üretim listesi
+      box.querySelectorAll('[data-combo]').forEach((b) => b.addEventListener('click', () => {
+        const [f] = b.dataset.combo.split('|');
+        setRange(f, today());
+        ctx.navigate('combos', { batch: b.dataset.batch });
+      }));
       box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => {
         const [f, t] = b.dataset.open.split('|');
         setRange(f, t);

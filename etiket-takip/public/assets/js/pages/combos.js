@@ -24,7 +24,8 @@ export default async function combosPage(ctx) {
   let filter = { storeIds: [], platforms: [] };
   let min = Math.max(1, +pref.min || 10);
   let includeRewards = !!pref.rewards;
-  let batchIds = []; // boş = tüm yüklemeler
+  // boş = tüm yüklemeler; Etiket Yükle'den "kombinasyon listesini aç" ile gelinirse o yükleme seçili açılır
+  let batchIds = ctx.params.batch && /^[0-9a-z-]{10,40}$/.test(ctx.params.batch) ? [ctx.params.batch] : [];
   let tFrom = '', tTo = '';
   let orders = [], batches = [], result = null, pasted = null;
   let dayOrders = []; // tarih aralığındaki siparişler (yükleme seçilmemişse analiz bunlarla yapılır)

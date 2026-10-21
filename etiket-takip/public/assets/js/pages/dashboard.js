@@ -6,6 +6,20 @@ import { rangePicker, barChart } from '../core/widgets.js';
 import { campaignStatus } from './campaigns.js';
 import { isArchiveOnly } from '../shared/matcher.js';
 
+/** Her gün yapılacaklar: sırasıyla adımlar ve ilgili sayfaların düğmeleri */
+function flowCard() {
+  let hidden = false;
+  try { hidden = localStorage.getItem('et-flow-hidden') === '1'; } catch { /* yok */ }
+  const step = (no, title, text, href, btn, ic) => html`<div class="flow-step"><div class="flow-no">${no}</div><div class="flow-c"><b>${title}</b><div class="muted small">${text}</div></div><a class="btn sm" href="${href}">${icon(ic)}${btn}</a></div>`;
+  return html`<div class="card"><div class="card-h"><h2>Günlük iş akışı</h2><span class="sub">Her gün bu sırayla</span><span class="spacer"></span><button class="btn sm ghost" id="flowToggle">${hidden ? 'Göster' : 'Gizle'}</button></div>
+    <div class="card-b flow ${hidden ? 'hidden' : ''}" id="flow">
+      ${step(1, 'Etiketleri yükle', 'OMS\'den indirdiğin bütün PDF\'leri Etiket Yükle\'ye sürükle → Kaydet. Tarih kendiliğinden bugün; daha önce yüklenenler tekrar sayılmaz.', '#/upload', 'Etiket Yükle', 'upload')}
+      ${step(2, 'Kombinasyon listesini al', 'Kaydettikten sonra çıkan “Bu yüklemenin kombinasyon listesini aç” düğmesine bas. Orada: Yazdır (A4, imzalı liste) ve Excel indir → Teslim listesi (TARİH · SAAT · MAĞAZA · KOMBİNASYON · SİPARİŞ ADEDİ · TESLİM ALAN).', '#/combos', 'Kombinasyon Analizi', 'copy')}
+      ${step(3, 'Karmayı ve Düzce\'yi ayır', 'Etiket Ayıklama: karma PDF\'ini at → Sadece Şişe / Kutulu. “Şehre göre” sekmesi → Düzce / Diğer şehirler. Yazdır düğmesi aynı anda PDF\'i de indirir; barkodlara dokunulmaz.', '#/karma', 'Etiket Ayıklama', 'split')}
+      ${step(4, 'Bir hata çıkarsa', 'Siparişler sayfasında sipariş ya da barkod numarasını ara: ürünleri, hangi yüklemede geldiği ve kimin kontrol ettiği görünür.', '#/orders', 'Siparişler', 'search')}
+    </div></div>`;
+}
+
 export default async function dashboardPage(ctx) {
   let day = getRange().to;
   if (day > today()) day = today();
@@ -16,8 +30,17 @@ export default async function dashboardPage(ctx) {
   mount(ctx.actions, html`${can('personel') ? html`<a class="btn" href="#/upload">${icon('upload')}Etiket yükle</a>` : ''}<a class="btn primary" href="#/production">${icon('factory')}Üretim listesi</a>`);
   mount(ctx.el, html`<div class="stack">
     <div class="row wrap"><div><h2 style="font-size:1.2rem">${greet}, ${personName(state.me.username)}</h2><div class="muted small" id="dayLabel"></div></div><span class="spacer"></span><div id="picker"></div></div>
+    ${can('personel') ? flowCard() : ''}
     <div id="body"><div class="loading"><div class="spin"></div></div></div>
   </div>`);
+  const fl = ctx.el.querySelector('#flowToggle');
+  if (fl) fl.addEventListener('click', () => {
+    const box = ctx.el.querySelector('#flow');
+    const hide = !box.classList.contains('hidden');
+    box.classList.toggle('hidden', hide);
+    fl.textContent = hide ? 'Göster' : 'Gizle';
+    try { localStorage.setItem('et-flow-hidden', hide ? '1' : ''); } catch { /* yok */ }
+  });
   rangePicker(ctx.el.querySelector('#picker'), { single: true, onChange: (f) => { day = f; load(); } });
 
   let batches = [];

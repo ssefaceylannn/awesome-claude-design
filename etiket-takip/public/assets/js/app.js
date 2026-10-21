@@ -9,7 +9,6 @@ const NAV = [
   { group: 'Operasyon', items: [
     { id: 'dashboard', label: 'Genel Bakış', icon: 'dashboard' },
     { id: 'upload', label: 'Etiket Yükle', icon: 'upload', role: 'personel' },
-    { id: 'dispatch', label: 'Günlük Dağıtım', icon: 'printer', role: 'personel' },
     { id: 'resend', label: 'Yeniden Gönderim', icon: 'refresh', role: 'personel' },
     { id: 'production', label: 'Üretim Listesi', icon: 'factory' },
     { id: 'combos', label: 'Kombinasyon Analizi', icon: 'copy' },
@@ -30,7 +29,7 @@ const NAV = [
   ] },
 ];
 // Menüde görünmeyen sayfalar
-const HIDDEN = [{ id: 'product', label: 'Ürün' }];
+const HIDDEN = [{ id: 'product', label: 'Ürün' }, { id: 'dispatch', label: 'Günlük Dağıtım', role: 'personel' }]; // dağıtım: menüden kaldırıldı, adresle açılır
 const ROLE_LABEL = { admin: 'Yönetici', personel: 'Personel', izleyici: 'İzleyici' };
 const pages = {};
 let cleanup = null;
