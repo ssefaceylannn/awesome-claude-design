@@ -7,7 +7,7 @@ import { fold } from '../shared/text.js';
 import { computeOrder } from '../shared/calc.js';
 import { analyzeCombos, parseComboPaste, KARMA } from '../shared/combos.js';
 import { rangePicker, storeFilters, filterLabel } from '../core/widgets.js';
-import { exportTable } from '../core/excel.js';
+import { exportTable, lib as excelLib, save as excelSave } from '../core/excel.js';
 import { paperById, paperPicker } from '../core/paper.js';
 import { karmaPref, karmaLabel, karmaName, karmaSplitOn, setKarmaSplit } from '../core/karmapref.js';
 
@@ -29,6 +29,8 @@ export default async function combosPage(ctx) {
   let orders = [], batches = [], result = null, pasted = null;
   let dayOrders = []; // tarih aralığındaki siparişler (yükleme seçilmemişse analiz bunlarla yapılır)
   let again = 0; // seçilen yüklemelerde yeniden gelen (daha önce kaydedilmiş) sipariş sayısı
+  // Yükleme seçilince varsayılan: yalnızca o yüklemede YENİ kaydedilen siparişler (mükerrerler sayılmaz)
+  let withAgain = !!pref.again;
   let loadSeq = 0;
   let computedAll = []; // son hesaplanan siparişler (yazdırma mağaza mağaza buradan yapılır)
   const kp = karmaPref(); // karma ayrımı: "Sadece Şişe" / "Kutulu" (/ "Şişesiz") — kural Karma Ayıklama sayfasında
@@ -51,6 +53,7 @@ export default async function combosPage(ctx) {
         <label class="f">Yükleme<div id="fBatch" style="width:280px"></div></label>
         <label class="f">Yükleme saati<div class="row" style="gap:6px"><input type="time" class="input sm" id="tFrom" style="width:110px"><span class="muted">–</span><input type="time" class="input sm" id="tTo" style="width:110px"></div></label>
         <label class="f">En az sipariş <span class="hint">altı karmaya</span><input type="number" class="input sm" id="min" min="1" max="999" value="${min}" style="width:90px"></label>
+        <label class="check small" style="margin-bottom:6px" title="Yükleme ya da saat seçiliyken geçerlidir"><input type="checkbox" id="again" ${withAgain ? 'checked' : ''}> Yüklemede yeniden gelen (daha önce kaydedilmiş) siparişleri de say</label>
         <label class="check small" style="margin-bottom:6px"><input type="checkbox" id="rw" ${includeRewards ? 'checked' : ''}> Kampanya ürünlerini pakete dahil et</label>
         <label class="check small" style="margin-bottom:6px" title="Kategoriler ve grup adları Karma Ayıklama sayfasından değiştirilir"><input type="checkbox" id="ksplit" ${splitOn ? 'checked' : ''}> Karmayı ayır: ${['only', 'rest', ...(kp.third ? ['none'] : [])].map((k, i) => html`${i ? ' / ' : ''}<b>${kp.names[k]}</b>`)} <a href="#/karma" class="muted">(kural: Etiket Ayıklama)</a></label>
       </div></div>
@@ -78,6 +81,7 @@ export default async function combosPage(ctx) {
   $('#tFrom').addEventListener('change', (e) => { tFrom = e.target.value; pickOrders(); });
   $('#tTo').addEventListener('change', (e) => { tTo = e.target.value; pickOrders(); });
   $('#min').addEventListener('change', (e) => { min = Math.max(1, Math.min(999, parseInt(e.target.value, 10) || 10)); e.target.value = min; savePref({ min }); compute(); renderPaste(); });
+  $('#again').addEventListener('change', (e) => { withAgain = e.target.checked; savePref({ again: withAgain }); pickOrders(); });
   $('#rw').addEventListener('change', (e) => { includeRewards = e.target.checked; savePref({ rewards: includeRewards }); compute(); });
   $('#ksplit').addEventListener('change', (e) => { splitOn = e.target.checked; setKarmaSplit(splitOn); compute(); });
 
@@ -112,9 +116,9 @@ export default async function combosPage(ctx) {
   }
 
   /**
-   * Yükleme veya saat seçiliyse: o yüklemelerdeki TÜM siparişler — yeni olanlar ve daha önce (başka
-   * yüklemede / başka gün) kaydedilmiş olup bu yüklemede yeniden gelenler. Hiçbiri iki kez sayılmaz.
-   * Seçim yoksa: tarih aralığındaki siparişler.
+   * Yükleme veya saat seçiliyse: o yüklemelerde YENİ kaydedilen siparişler. "Yeniden gelenleri de say"
+   * işaretliyse daha önce (başka yüklemede / başka gün) kaydedilip bu yüklemede tekrar gelenler de eklenir.
+   * Hiçbiri iki kez sayılmaz. Seçim yoksa: tarih aralığındaki siparişler.
    */
   async function pickOrders() {
     const seq = ++loadSeq;
@@ -130,7 +134,7 @@ export default async function combosPage(ctx) {
       const pool = dates.length ? await fetchOrders(lo, hi) : [];
       if (seq !== loadSeq || !ctx.isCurrent()) return;
       const byK = new Map(pool.map((o) => [o.k, o]));
-      orders = refs.map((r) => byK.get(r.k)).filter((o) => o && !o.summary);
+      orders = refs.filter((r) => withAgain || !r.again).map((r) => byK.get(r.k)).filter((o) => o && !o.summary);
       again = refs.filter((r) => r.again && byK.has(r.k)).length;
       compute();
     } catch (e) { mount($('#body'), html`<div class="callout err">${icon('alert')}<div class="c">${e.message}</div></div>`); }
@@ -159,7 +163,7 @@ export default async function combosPage(ctx) {
     const unm = R.groups.concat(R.karma.groups).some((g) => g.parts.some((p) => p.id.startsWith('?')));
     mount($('#body'), html`<div class="stack">
       <div class="kpis">
-        <div class="kpi"><div class="l">${icon('receipt')}Sipariş</div><div class="v">${n(R.orders)}</div><div class="s">${n(R.groups.length + R.karma.groups.length)} farklı bileşim${again ? ` · ${n(again)} yeniden yüklenen dahil` : ''}</div></div>
+        <div class="kpi"><div class="l">${icon('receipt')}Sipariş</div><div class="v">${n(R.orders)}</div><div class="s">${n(R.groups.length + R.karma.groups.length)} farklı bileşim${again ? (withAgain ? ` · ${n(again)} yeniden gelen dahil` : ` · ${n(again)} yeniden gelen (mükerrer) sayılmadı`) : ''}</div></div>
         <div class="kpi hl"><div class="l">${icon('box')}${min}+ siparişli bileşim</div><div class="v">${n(R.groups.length)}</div><div class="s">${n(inGroups)} sipariş</div></div>
         <div class="kpi"><div class="l">${icon('copy')}${KARMA}</div><div class="v">${n(R.karma.orders)}</div><div class="s">${R.karma.split ? R.karma.split.map((x) => `${karmaName(x.key, kp)} ${n(x.orders)}`).join(' · ') : `${n(R.karma.groups.length)} bileşim · ${n(R.karma.units)} ürün`}</div></div>
       </div>
@@ -236,18 +240,98 @@ export default async function combosPage(ctx) {
           .concat(pasted.cards.filter((c) => c.karma).map((c) => [KARMA, c.total]));
         await exportTable('siparis-gruplari.xlsx', 'Sipariş Grupları', [{ label: 'Ürün(ler)', width: 70 }, { label: 'Sipariş sayısı', width: 18, num: true }], rows);
       } else {
-        if (!result || !result.orders) throw new Error('Gösterilecek sipariş yok');
-        const rows = result.groups.map((g) => [g.label, g.orders, g.units * g.orders]);
-        for (const x of karmaParts(result.karma)) {
-          rows.push([x.label, x.orders, x.units]);
-          for (const g of x.groups) rows.push([`   ${g.label}`, g.orders, g.units * g.orders]);
-        }
-        const stamp = from === to ? from : `${from}_${to}`;
-        await exportTable(`kombinasyonlar_${stamp}.xlsx`, `Kombinasyonlar ${rangeLabel(from, to)}`.slice(0, 31), [{ label: 'Kombinasyon', width: 70 }, { label: 'Sipariş', width: 12, num: true }, { label: 'Toplam ürün', width: 14, num: true }], rows);
+        if (!computedAll.length) throw new Error('Gösterilecek sipariş yok');
+        busy(btn, false);
+        const kind = await askExcel();
+        if (!kind) return;
+        busy(btn, true, 'Hazırlanıyor…');
+        if (kind === 'print') await xlsPrintLike(); else await xlsLog();
       }
     } catch (err) { toast(err.message, 'err'); }
     busy(btn, false);
   });
+
+  // ---------------------------------------------------------------- Excel biçimleri
+  async function askExcel() {
+    let pick = null;
+    await modal({
+      title: 'Excel indir',
+      body: html`<div class="stack" style="gap:10px">
+        <p class="muted small" style="margin:0">Mağaza seçimi, tarih ve yükleme seçimi sayfadakiyle aynıdır.</p>
+        <div class="callout info">${icon('printer')}<div class="c"><b>Çıktıdaki gibi</b>Mağaza mağaza bölümler, yazdırma ayarlarındaki sütunlar (Ürünler / Sipariş adedi / Ürün adedi ve eklediğiniz boş sütunlar) ve karma satırları. Düzenleyip yazdırmak için.</div></div>
+        <div class="callout info">${icon('sheet')}<div class="c"><b>Teslim listesi</b>Sütunlar: TARİH · SAAT · MAĞAZA · KOMBİNASYON · SİPARİŞ ADEDİ · TESLİM ALAN. Her mağazanın her kombinasyonu bir satır; tarih ve saat siparişlerin yüklendiği an. Kendi Excel'inize yapıştırmak için.</div></div>
+      </div>`,
+      actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Çıktıdaki gibi', value: 'print', icon: 'printer' }, { label: 'Teslim listesi', value: 'log', variant: 'primary', icon: 'sheet' }],
+      onSubmit: (v) => { pick = v === 'cancel' ? null : v; },
+    });
+    return pick;
+  }
+  const fileStamp = () => (from === to ? from : `${from}_${to}`);
+  const trD = (ymd) => ymd.split('-').reverse().join('.');
+  /** Bir satırdaki siparişlerin yüklenme tarihi ve saati (hepsi aynıysa tek değer, değilse aralık) */
+  function uploadedAt(list) {
+    const ats = list.map((o) => o.at).filter(Boolean).sort();
+    if (!ats.length) return ['', ''];
+    const d1 = localYmd(ats[0]), d2 = localYmd(ats[ats.length - 1]);
+    const t1 = hhmm(ats[0]), t2 = hhmm(ats[ats.length - 1]);
+    return [d1 === d2 ? trD(d1) : `${trD(d1)} – ${trD(d2)}`, d1 === d2 && t1 === t2 ? t1 : `${t1} – ${t2}`];
+  }
+  /** Teslim listesi: TARİH · SAAT · MAĞAZA · KOMBİNASYON · SİPARİŞ ADEDİ · TESLİM ALAN (ilk satır başlık, yapıştırmaya hazır) */
+  async function xlsLog() {
+    const ExcelJS = await excelLib();
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Teslim Listesi', { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.columns = [{ width: 14 }, { width: 14 }, { width: 26 }, { width: 60 }, { width: 16 }, { width: 22 }];
+    const head = ws.getRow(1);
+    head.values = ['TARİH', 'SAAT', 'MAĞAZA', 'KOMBİNASYON', 'SİPARİŞ ADEDİ', 'TESLİM ALAN'];
+    head.font = { bold: true };
+    let r = 2;
+    for (const sc of printSections()) {
+      const lines = [...sc.R.groups.map((g) => ({ label: g.label, orders: g.orders, refs: g.refs })),
+        ...karmaParts(sc.R.karma).map((x) => ({ label: x.label, orders: x.orders, refs: x.groups.flatMap((g) => g.refs) }))];
+      for (const l of lines) {
+        const [d, t] = uploadedAt(l.refs);
+        ws.getRow(r++).values = [d, t, sc.name, l.label, l.orders, ''];
+      }
+    }
+    await excelSave(wb, `teslim-listesi_${fileStamp()}.xlsx`);
+  }
+  /** Çıktıdaki gibi: mağaza mağaza, yazdırma ayarlarındaki sütunlar ve boş sütunlar */
+  async function xlsPrintLike() {
+    const p = printPref();
+    const ExcelJS = await excelLib();
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Kombinasyon Listesi');
+    const cols = [...p.cols.map((k) => ({ k, label: PCOLS.find((c) => c[0] === k)[1], width: k === 'products' ? 60 : 16 })), ...p.extra.map((x) => ({ k: 'x', label: x.label, width: 10 + XW[x.w][1] * 1.5 }))];
+    ws.columns = cols.map((c) => ({ width: c.width }));
+    const thin = { style: 'thin', color: { argb: 'FF888888' } };
+    const box = { top: thin, left: thin, bottom: thin, right: thin };
+    const grey = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEEEEE' } };
+    let r = 1;
+    ws.mergeCells(r, 1, r, cols.length);
+    ws.getCell(r, 1).value = 'Kombinasyon Listesi'; ws.getCell(r, 1).font = { bold: true, size: 14 }; r++;
+    ws.mergeCells(r, 1, r, cols.length);
+    ws.getCell(r, 1).value = `${rangeLabel(from, to)}${batchIds.length || tFrom || tTo ? ' · seçili yüklemeler' : ''} · ${min} siparişten az olan bileşimler “${KARMA}” satırında`; r += 2;
+    for (const sc of printSections()) {
+      ws.mergeCells(r, 1, r, cols.length);
+      ws.getCell(r, 1).value = `${sc.name} — ${n(sc.R.orders)} sipariş`; ws.getCell(r, 1).font = { bold: true, size: 13 }; r++;
+      const hr = ws.getRow(r++);
+      cols.forEach((c, i) => { const cell = hr.getCell(i + 1); cell.value = c.label; cell.font = { bold: true }; cell.fill = grey; cell.border = box; cell.alignment = { wrapText: true }; });
+      const put = (label, orders, units, karma) => {
+        const row = ws.getRow(r++);
+        cols.forEach((c, i) => {
+          const cell = row.getCell(i + 1);
+          cell.value = c.k === 'products' ? label : c.k === 'orders' ? orders : c.k === 'units' ? units : '';
+          cell.border = box; cell.alignment = { wrapText: true };
+          if (karma) { cell.font = { bold: true }; cell.fill = grey; }
+        });
+      };
+      for (const g of sc.R.groups) put(g.label, g.orders, g.units * g.orders, false);
+      for (const x of karmaParts(sc.R.karma)) put(x.label, x.orders, x.units, true);
+      r++;
+    }
+    await excelSave(wb, `kombinasyon-listesi_${fileStamp()}.xlsx`);
+  }
 
   // ---------------------------------------------------------------- yazdırma (A4, mağaza mağaza)
   // Sayfa düzeni ayarları hatırlanır; önizleme ve çıktı aynı HTML/CSS ile üretilir.
