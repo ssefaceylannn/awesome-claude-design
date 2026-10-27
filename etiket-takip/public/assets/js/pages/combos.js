@@ -514,7 +514,7 @@ export default async function combosPage(ctx) {
         <p class="muted small" style="margin:0">Mağaza seçimi, tarih ve yükleme seçimi sayfadakiyle aynıdır.</p>
         <div class="callout info">${icon('printer')}<div class="c"><b>Çıktıdaki gibi</b>Mağaza mağaza bölümler, yazdırma ayarlarındaki sütunlar (Ürünler / Sipariş adedi / Ürün adedi ve eklediğiniz boş sütunlar) ve karma satırları. Düzenleyip yazdırmak için.</div></div>
         <div class="callout info">${icon('sheet')}<div class="c"><b>Teslim listesi</b>Sütunlar: TARİH · SAAT · MAĞAZA · KOMBİNASYON · SİPARİŞ ADEDİ · TESLİM ALAN. Her mağazanın her kombinasyonu bir satır; tarih ve saat siparişlerin yüklendiği an; teslim alan sitede kayıtlıysa dolu gelir.</div></div>
-        <div class="callout info">${icon('receipt')}<div class="c"><b>Sipariş bazında</b>Her sipariş bir satır: TARİH · SAAT · MAĞAZA · SİPARİŞ / BARKOD NO (734… / 275…) · PTT BARKOD · KOMBİNASYON (karma siparişlerde içeriğiyle) · TESLİM ALAN. Hangi siparişi kimin yaptığını bulmak için.</div></div>
+        <div class="callout info">${icon('receipt')}<div class="c"><b>Sipariş bazında</b>Her sipariş bir satır: TARİH · SAAT · MAĞAZA · SİPARİŞ / BARKOD NO (734… / 275…) · PTT BARKOD · KOMBİNASYON (karma siparişlerde siparişin kendi içeriği) · TESLİM ALAN. Hangi siparişi kimin yaptığını bulmak için.</div></div>
       </div>`,
       actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Çıktıdaki gibi', value: 'print', icon: 'printer' }, { label: 'Sipariş bazında', value: 'orders', icon: 'receipt' }, { label: 'Teslim listesi', value: 'log', variant: 'primary', icon: 'sheet' }],
       onSubmit: (v) => { pick = v === 'cancel' ? null : v; },
@@ -556,7 +556,7 @@ export default async function combosPage(ctx) {
     ws.columns = [{ width: 13 }, { width: 9 }, { width: 24 }, { width: 22 }, { width: 18 }, { width: 18 }, { width: 70 }, { width: 22 }];
     const head = ws.getRow(1);
     head.values = ['TARİH', 'SAAT', 'MAĞAZA', 'SİPARİŞ / BARKOD NO', 'PTT BARKOD', 'PLATFORM SİPARİŞ NO', 'KOMBİNASYON', 'TESLİM ALAN'];
-    // Karma siparişlerde KOMBİNASYON hücresine siparişin kendi içeriği eklenir (sütun sırası değişmez)
+    // Karma siparişlerde KOMBİNASYON hücresine grup adı yerine siparişin kendi içeriği yazılır (sütun sırası değişmez)
     const byK = new Map(computedAll.map((c) => [c.order.k, c]));
     const icerik = (o) => { const c = byK.get(o.k) || computeOrder(o, state.ctx); return comboOf(c, state.ctx).label; };
     head.font = { bold: true };
@@ -566,7 +566,7 @@ export default async function combosPage(ctx) {
         const [d, t] = uploadedAt([o]);
         const a = assigns[o.k];
         // Uzun numaralar metin olarak yazılır (Excel 734… gibi 16 haneli sayıları bozmasın)
-        ws.getRow(r++).values = [d, t, l.store, String(o.no || ''), String(o.cargoCode || ''), String(o.platformOrderNo || ''), l.karma ? `${l.label} (${icerik(o)})` : l.label, a ? a.n : ''];
+        ws.getRow(r++).values = [d, t, l.store, String(o.no || ''), String(o.cargoCode || ''), String(o.platformOrderNo || ''), l.karma ? icerik(o) : l.label, a ? a.n : ''];
       }
     }
     ws.getColumn(4).numFmt = '@'; ws.getColumn(5).numFmt = '@'; ws.getColumn(6).numFmt = '@';
