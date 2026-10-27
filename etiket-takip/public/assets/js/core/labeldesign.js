@@ -97,16 +97,22 @@ export function fitLabels(root) {
   const hidden = getComputedStyle(root).display === 'none';
   const prev = root.getAttribute('style');
   if (hidden) root.setAttribute('style', 'display:block;position:fixed;left:-30000px;top:0;visibility:hidden');
+  // Sığan en büyük punto (0,5'lik adımlarla, en az 5) ikiye bölerek aranır: alan başına ~6 ölçüm
+  // (önceden her yarım puntoda bir ölçüm yapılıyordu; çok etikette tarayıcıyı donduruyordu)
   root.querySelectorAll('.pe').forEach((el) => {
     if (el.classList.contains('pe-barcode') || el.classList.contains('pe-line')) return;
     const inner = el.querySelector('.pe-in');
-    let fs = parseFloat(el.style.fontSize) || 0;
-    if (!fs) return;
-    let guard = 0;
-    while ((inner.scrollHeight > el.clientHeight + 1 || inner.scrollWidth > el.clientWidth + 1) && fs > 5 && guard++ < 60) {
-      fs = Math.round((fs - 0.5) * 2) / 2;
-      el.style.fontSize = fs + 'pt';
+    const fs = parseFloat(el.style.fontSize) || 0;
+    if (!fs || !inner) return;
+    const fits = () => inner.scrollHeight <= el.clientHeight + 1 && inner.scrollWidth <= el.clientWidth + 1;
+    if (fits()) return;
+    let lo = 10, hi = Math.round(fs * 2) - 1, best = 10; // yarım punto birimi (10 = 5pt)
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      el.style.fontSize = mid / 2 + 'pt';
+      if (fits()) { best = mid; lo = mid + 1; } else hi = mid - 1;
     }
+    el.style.fontSize = best / 2 + 'pt';
   });
   if (hidden) { if (prev == null) root.removeAttribute('style'); else root.setAttribute('style', prev); }
 }

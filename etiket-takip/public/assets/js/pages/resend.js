@@ -51,8 +51,16 @@ export default async function resendPage(ctx) {
   const zoomFor = (p) => Math.min(0.72, 260 / (p.w * 96 / 25.4));
 
   // Tek sipariş detayı (liste biçimi değilse): ürünler katalogla eşleştirilir
+  const matchCache = new Map(); // mağaza|satır → ürün (her tuşta aynı satırlar yeniden eşleştirilmesin)
   const matchLine = (line) => {
     const st = store();
+    const ck = (st ? st.id : '') + '|' + line;
+    if (matchCache.has(ck)) return matchCache.get(ck);
+    const r = matchLineRaw(line, st);
+    matchCache.set(ck, r);
+    return r;
+  };
+  const matchLineRaw = (line, st) => {
     const c = computeOrder({ k: '_', sender: st ? st.name : '', items: [{ name: line, qty: 1 }] }, state.ctx);
     return c.lines.length === 1 && c.lines[0].productId ? c.lines[0].productId : null;
   };
@@ -67,10 +75,15 @@ export default async function resendPage(ctx) {
       const code = (text.match(/\b734\d{9,}\b/) || [''])[0];
       orders = [{ orderNo: r.orderNo, recipient: r.recipient, code, amounts: r.amounts, items: r.items.map((x) => ({ name: pname(x.productId), qty: x.qty, productId: x.productId })), on: true }];
     } else orders = [];
+    // Okunan siparişler değişmediyse (ör. metnin sonuna boşluk) önizleme yeniden çizilmez
+    if (sigNow() === lastSig) return;
     draw();
   }
+  let lastSig = ''; // son çizilen önizlemenin imzası (her çizimde güncellenir)
+  const sigNow = () => JSON.stringify([orders, $('#store').value, paper.id, $('#txt').value.trim() ? 1 : 0]);
 
   function draw() {
+    lastSig = sigNow();
     const st = store();
     const on = orders.filter((o) => o.on);
     $('#printLbl').textContent = on.length ? `${on.length} etiketi yazdır` : 'Etiketleri yazdır';
@@ -119,7 +132,7 @@ export default async function resendPage(ctx) {
   }
 
   let t;
-  $('#txt').addEventListener('input', () => { clearTimeout(t); t = setTimeout(parse, 200); });
+  $('#txt').addEventListener('input', () => { clearTimeout(t); t = setTimeout(parse, 400); });
   $('#store').addEventListener('change', () => { savePref({ ...loadPref(), store: $('#store').value }); parse(); });
   $('#design').addEventListener('click', async () => {
     const sample = orders.find((o) => o.on) || null;

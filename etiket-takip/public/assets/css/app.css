@@ -674,7 +674,7 @@ a { color: var(--brand); }
 .label-cell.off .label-zoom { opacity: .35; }
 .label-zoom { border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px var(--border-strong), var(--shadow); width: max-content; }
 .plabel { -webkit-print-color-adjust: exact; print-color-adjust: exact; position: relative; box-sizing: border-box; background: #fff; color: #000; overflow: hidden; font-family: "Inter", Arial, Helvetica, sans-serif; line-height: 1.2; }
-.pe { position: absolute; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; justify-content: center; }
+.pe { position: absolute; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; justify-content: center; contain: layout paint; } /* ölçüm yalnızca bu alanı yeniden hesaplatsın */
 .pe-in { width: 100%; overflow-wrap: anywhere; }
 .pe-name .pe-in, .pe-orderNo .pe-in, .pe-store .pe-in, .pe-company .pe-in, .pe-code .pe-in { white-space: nowrap; overflow: hidden; text-overflow: clip; }
 .pe-orderNo { font-variant-numeric: tabular-nums; }
