@@ -556,7 +556,10 @@ async function getOrders(url) {
     if (dates.length > 31) throw new HttpError(400, 'Tek istekte en fazla 31 gün');
   }
   const days = await pmap(dates, 12, (d) => getJSON(`day/${d}`));
-  return json({ orders: days.filter(Boolean).flatMap((d) => d.orders) });
+  // ?source=resend → yalnızca o kaynaktaki siparişler (ör. Yeniden Gönderim listesi; on binlerce sipariş indirilmesin)
+  const source = url.searchParams.get('source');
+  const all = days.filter(Boolean).flatMap((d) => d.orders);
+  return json({ orders: source ? all.filter((o) => o.source === source) : all });
 }
 
 async function removeFromIndex(entries) {

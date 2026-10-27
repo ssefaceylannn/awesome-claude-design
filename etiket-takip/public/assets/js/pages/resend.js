@@ -2,7 +2,7 @@
 // her sipariş için barkodlu gönderim etiketi (isim, sipariş no, mağaza + firma, ürünler, 734… kodu).
 // İsteğe bağlı olarak üretim listesine "yeniden gönderim" olarak eklenir (kampanya uygulanmaz).
 import { html, raw, mount, personName, icon, n, trDate, toast, today, addDays, confirmDialog, busy, emptyState, storeTag, modal } from '../core/ui.js';
-import { api, state, isAdmin, fetchOrders, invalidateOrders } from '../core/api.js';
+import { api, state, isAdmin, invalidateOrders } from '../core/api.js';
 import { computeOrder } from '../shared/calc.js';
 import { parseResendText, parseOrderList, detectStore, companyFor } from '../shared/resend.js';
 import { paperById, paperPicker } from '../core/paper.js';
@@ -14,6 +14,7 @@ const savePref = (p) => { try { localStorage.setItem(PREF, JSON.stringify(p)); }
 
 // Önceki sürümdeki "150"/"100" seçimi yeni kâğıt kimliklerine
 const OLD_SIZE = { 150: 'l100x150', 100: 'l100x100' };
+const PREVIEW_MAX = 40; // önizlemede tam çizilen etiket sayısı
 
 export default async function resendPage(ctx) {
   const stores = state.config.stores.filter((s) => s.active !== false);
@@ -92,9 +93,14 @@ export default async function resendPage(ctx) {
       return;
     }
     mount($('#preview'), html`<div class="card"><div class="card-h"><h2>Önizleme</h2><span class="sub">${n(orders.length)} sipariş · ${n(orders.reduce((s, o) => s + o.items.reduce((a, it) => a + it.qty, 0), 0))} ürün</span></div>
+      ${orders.length > PREVIEW_MAX ? html`<div class="card-b" style="padding-bottom:0"><div class="callout info">${icon('info')}<div class="c"><b>İlk ${PREVIEW_MAX} etiket önizlemede çiziliyor</b>Kalan ${n(orders.length - PREVIEW_MAX)} sipariş aşağıda satır olarak; işaretli olanların hepsi yazdırılır.</div></div></div>` : ''}
       <div class="card-b"><div class="label-grid">${orders.map((o, i) => {
         const c = computeOrder({ k: '_', sender: st ? st.name : '', source: 'resend', items: o.items }, state.ctx);
         const unm = c.lines.filter((l) => !l.productId && !l.ignored).length;
+        // Çok siparişte önizleme hafif kalsın: ilk PREVIEW_MAX etiket tam çizilir, gerisi sade satır (yazdırmada hepsi tam)
+        if (i >= PREVIEW_MAX) return html`<div class="label-cell ${o.on ? '' : 'off'}"><div class="row" style="gap:8px"><label class="check"><input type="checkbox" data-on="${i}" ${o.on ? 'checked' : ''}> Yazdır</label>
+          <span class="small"><b>${o.recipient || '—'}</b> · ${o.orderNo || ''} · ${o.items.map((it) => `${it.qty}× ${it.name}`).join(', ')}</span><span class="spacer"></span>
+          ${!o.code ? html`<span class="badge err">Barkod yok</span>` : ''}${unm ? html`<span class="badge warn">${unm} ürün eşleşmedi</span>` : ''}<button class="btn sm ghost icon" data-edit="${i}" title="Düzenle">${icon('edit')}</button></div></div>`;
         return html`<div class="label-cell ${o.on ? '' : 'off'}">
           <div class="row" style="gap:8px;margin-bottom:8px"><label class="check"><input type="checkbox" data-on="${i}" ${o.on ? 'checked' : ''}> Yazdır</label><span class="spacer"></span>
             ${!o.code ? html`<span class="badge err">Barkod yok</span>` : ''}${!o.items.length ? html`<span class="badge err">Ürün yok</span>` : unm ? html`<span class="badge warn" title="Üretim listesinde eşleşmeyen ürün olarak görünür; Ürün Eşleştirme'den atayın">${unm} ürün eşleşmedi</span>` : html`<span class="badge ok">${icon('check')} Ürünler eşleşti</span>`}
@@ -179,7 +185,8 @@ export default async function resendPage(ctx) {
 
   async function loadList() {
     try {
-      const all = await fetchOrders(addDays(today(), -30), today());
+      // Yalnızca yeniden gönderimler istenir (önceden son 30 günün bütün siparişleri indiriliyordu → bellek şişiyordu)
+      const { orders: all } = await api.get(`orders?from=${addDays(today(), -30)}&to=${today()}&source=resend`);
       if (!ctx.isCurrent()) return;
       const list = all.filter((o) => o.source === 'resend').reverse();
       mount($('#list'), list.length ? html`<div class="tw"><table class="t"><thead><tr><th>Tarih</th><th>Mağaza</th><th>Sipariş no</th><th>Alıcı</th><th>Ürünler</th><th>Kargo kodu</th><th>Kaydeden</th>${isAdmin() ? html`<th></th>` : ''}</tr></thead><tbody>
