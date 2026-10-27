@@ -175,12 +175,32 @@ export default async function combosPage(ctx) {
     if (ctx.isCurrent()) drawTeslim();
   }
   /** Mağaza mağaza her kombinasyon satırı ve siparişleri (teslim listesi, sipariş bazında Excel ve içe aktarma aynı satırları kullanır) */
-  function teslimLines(sections = printSections()) {
-    const out = [];
-    for (const sc of sections) {
-      for (const g of sc.R.groups) out.push({ store: sc.name, label: g.label, key: g.key, karma: null, orders: g.orders, refs: g.refs });
-      for (const x of karmaParts(sc.R.karma)) out.push({ store: sc.name, label: x.label, key: null, karma: x.key, orders: x.orders, refs: x.groups.flatMap((g) => g.refs) });
+  /**
+   * Yüklemeler (tarih-saat sırasıyla). Birden fazla gün/yükleme seçilse de her yükleme kendi kombinasyon listesiyle
+   * hesaplanır — o gün yazdırılan liste gibi (10 sınırı yükleme içinde). Yükleme bilgisi olmayan eski kayıtlar
+   * yüklenme dakikasına göre gruplanır.
+   */
+  function uploadGroups() {
+    const by = new Map();
+    for (const c of computedAll) {
+      const o = c.order;
+      const key = o.batch || (o.at ? `${localYmd(o.at)} ${hhmm(o.at)}` : `gün ${o.date}`);
+      if (!by.has(key)) by.set(key, { key, list: [], first: o.at || o.date || '' });
+      const g = by.get(key);
+      g.list.push(c);
+      if ((o.at || '') && (o.at < g.first || !g.first)) g.first = o.at;
     }
+    return [...by.values()].sort((a, b) => String(a.first).localeCompare(String(b.first)));
+  }
+  /** Teslim satırları: yükleme yükleme (tarih-saat sırası), her yüklemede mağaza mağaza kombinasyonlar */
+  function teslimLines(sections) {
+    const out = [];
+    const push = (sc, up) => {
+      for (const g of sc.R.groups) out.push({ up, store: sc.name, label: g.label, key: g.key, karma: null, orders: g.orders, refs: g.refs });
+      for (const x of karmaParts(sc.R.karma)) out.push({ up, store: sc.name, label: x.label, key: null, karma: x.key, orders: x.orders, refs: x.groups.flatMap((g) => g.refs) });
+    };
+    if (sections) { for (const sc of sections) push(sc, null); return out; }
+    for (const up of uploadGroups()) { const n0 = out.length; for (const sc of printSections(up.list)) push(sc, up.key); for (let i = n0; i < out.length; i++) out[i].upAt = up.first; }
     return out;
   }
   /**
@@ -215,11 +235,13 @@ export default async function combosPage(ctx) {
     if (!box) return;
     teslimRows = splitByName(teslimLines());
     const done = teslimRows.filter((r) => r.name).length;
+    const multiUp = new Set(teslimRows.map((r) => r.up)).size > 1;
+    const upTitle = (r) => { const [d, t] = upWhen(r); return `Yükleme: ${d} ${t}`; };
     mount(box, html`<div class="card-h"><h2>Teslim alanlar</h2><span class="sub">Her kombinasyonu kim aldı? Yazıp kaydedin — isim o satırdaki her siparişe işlenir. Aynı kombinasyonu birden fazla kişi aldıysa her kişi ayrı satırda görünür.</span><span class="spacer"></span>
         <span class="badge ${done === teslimRows.length ? 'ok' : ''}">${n(done)} / ${n(teslimRows.length)} satır</span></div>
       <datalist id="teslimNames">${knownNames().map((x) => html`<option value="${x}">`)}</datalist>
       <div class="tw"><table class="t"><thead><tr><th>Mağaza</th><th>Kombinasyon</th><th class="num">Sipariş</th><th>Teslim alan</th></tr></thead><tbody>
-        ${teslimRows.map((r, i) => html`<tr${r.karma ? html` style="background:var(--surface-2)"` : ''}><td class="small nowrap">${r.store}</td><td class="small">${r.karma ? html`<b>${r.label}</b>` : r.label}</td><td class="num"><b>${n(r.orders)}</b></td>
+        ${teslimRows.map((r, i) => html`${multiUp && (i === 0 || teslimRows[i - 1].up !== r.up) ? html`<tr><td colspan="4" style="background:var(--surface-3)"><b>${upTitle(r)}</b></td></tr>` : ''}<tr${r.karma ? html` style="background:var(--surface-2)"` : ''}><td class="small nowrap">${r.store}</td><td class="small">${r.karma ? html`<b>${r.label}</b>` : r.label}</td><td class="num"><b>${n(r.orders)}</b></td>
           <td><input class="input sm" data-tr="${i}" list="teslimNames" maxlength="60" value="${r.name}" placeholder="Ad Soyad" style="width:220px"></td></tr>`)}
       </tbody></table></div>
       <div class="card-f row wrap" style="gap:8px">
@@ -523,6 +545,8 @@ export default async function combosPage(ctx) {
   }
   const fileStamp = () => (from === to ? from : `${from}_${to}`);
   const trD = (ymd) => ymd.split('-').reverse().join('.');
+  /** Satırın TARİH ve SAAT'i: yüklemenin başladığı an (tek değer; büyük yükleme dakika değişirken kaydedilse de) */
+  const upWhen = (l) => (l.upAt && /T/.test(l.upAt) ? [trD(localYmd(l.upAt)), hhmm(l.upAt)] : uploadedAt(l.refs));
   /** Bir satırdaki siparişlerin yüklenme tarihi ve saati (hepsi aynıysa tek değer, değilse aralık) */
   function uploadedAt(list) {
     const ats = list.map((o) => o.at).filter(Boolean).sort();
@@ -543,7 +567,7 @@ export default async function combosPage(ctx) {
     let r = 2;
     // Birden fazla kişiye gitmiş kombinasyon: her kişi ayrı satır, tek isim (açılır listeye uygun)
     for (const l of splitByName(teslimLines())) {
-      const [d, t] = uploadedAt(l.refs);
+      const [d, t] = upWhen(l);
       ws.getRow(r++).values = [d, t, l.store, l.label, l.orders, l.name];
     }
     await excelSave(wb, `teslim-listesi_${fileStamp()}.xlsx`);
@@ -563,7 +587,7 @@ export default async function combosPage(ctx) {
     let r = 2;
     for (const l of teslimLines()) {
       for (const o of l.refs.slice().sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')) || String(a.no).localeCompare(String(b.no)))) {
-        const [d, t] = uploadedAt([o]);
+        const [d, t] = upWhen(l);
         const a = assigns[o.k];
         // Uzun numaralar metin olarak yazılır (Excel 734… gibi 16 haneli sayıları bozmasın)
         ws.getRow(r++).values = [d, t, l.store, String(o.no || ''), String(o.cargoCode || ''), String(o.platformOrderNo || ''), l.karma ? icerik(o) : l.label, a ? a.n : ''];
@@ -635,9 +659,9 @@ export default async function combosPage(ctx) {
     };
   };
   /** Mağaza mağaza bölümler (seçili mağazalar ya da verideki tüm mağazalar) */
-  function printSections() {
+  function printSections(list = computedAll) {
     const byStore = new Map();
-    for (const c of computedAll) {
+    for (const c of list) {
       const key = c.store ? c.store.id : '?' + (c.order.sender || '');
       if (!byStore.has(key)) byStore.set(key, { name: c.store ? c.store.name : (c.order.sender || 'Tanımsız mağaza'), list: [] });
       byStore.get(key).list.push(c);
