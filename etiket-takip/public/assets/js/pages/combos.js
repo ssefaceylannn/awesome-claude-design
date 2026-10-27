@@ -412,22 +412,26 @@ export default async function combosPage(ctx) {
       const cs = pool.filter((o) => localYmd(o.at) === r.date && (!r.time || (hhmm(o.at) >= r.time[0] && hhmm(o.at) <= r.time[1]))).map(comp)
         .filter((c) => { const nm = storeKey(c.store ? c.store.name : c.order.sender); return !sk || nm === sk || nm.includes(sk) || sk.includes(nm); });
       if (!cs.length) { bad.push({ r, why: 'o gün/saatte bu mağazanın yüklenen siparişi yok' }); continue; }
-      const lines = teslimLines([{ name: r.store, R: analyzeCombos(cs, state.ctx, { min, includeRewards, ...splitOpt() }) }]);
+      // Liste kampanyasız ya da (ilk günlerdeki gibi) kampanya ürünleri dahil alınmış olabilir: ikisinde de aranır.
+      // Sipariş adedi tutan ilk eşleşme kullanılır; hiçbiri tutmazsa satıra isim yazılmaz.
       const fc = fold(r.combo);
-      let refs = null;
-      const exact = lines.find((l) => fold(l.label) === fc);
-      if (exact) refs = exact.refs;
-      else if (fc.startsWith('karma')) {
-        const karmaLines = lines.filter((l) => l.karma);
-        const named = karmaLines.find((l) => fc.includes(fold(karmaName(l.karma, kp))));
-        refs = named ? named.refs : karmaLines.length ? karmaLines.flatMap((l) => l.refs) : null;
-      } else {
-        const key = keyOfLabel(r.combo);
+      const key = fc.startsWith('karma') ? null : keyOfLabel(r.combo);
+      const findIn = (lines) => {
+        const exact = lines.find((l) => fold(l.label) === fc);
+        if (exact) return exact.refs;
+        if (fc.startsWith('karma')) {
+          const karmaLines = lines.filter((l) => l.karma);
+          const named = karmaLines.find((l) => fc.includes(fold(karmaName(l.karma, kp))));
+          return named ? named.refs : karmaLines.length ? karmaLines.flatMap((l) => l.refs) : null;
+        }
         const hit = key && lines.find((l) => l.key === key);
-        if (hit) refs = hit.refs;
-      }
-      if (!refs) { bad.push({ r, why: 'bu kombinasyon o yüklemede yok' }); continue; }
-      if (r.count != null && r.count !== refs.length) { bad.push({ r, why: `sipariş adedi tutmuyor (Excel'de ${r.count}, sitede ${refs.length})` }); continue; }
+        return hit ? hit.refs : null;
+      };
+      const tries = [includeRewards, !includeRewards].map((rw) => findIn(teslimLines([{ name: r.store, R: analyzeCombos(cs, state.ctx, { min, includeRewards: rw, ...splitOpt() }) }])));
+      const found = tries.filter(Boolean);
+      const refs = found.find((x) => r.count == null || x.length === r.count) || null;
+      if (!found.length) { bad.push({ r, why: 'bu kombinasyon o yüklemede yok' }); continue; }
+      if (!refs) { bad.push({ r, why: `sipariş adedi tutmuyor (Excel'de ${r.count}, sitede ${found.map((x) => x.length).join(' / ')})` }); continue; }
       ok.push({ r, n: refs.length });
       for (const o of refs) { if (seen.has(o.k)) continue; seen.add(o.k); items.push({ date: o.date, k: o.k, name: r.name, combo: r.combo, store: r.store }); }
     }
