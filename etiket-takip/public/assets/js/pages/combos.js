@@ -34,6 +34,8 @@ export default async function combosPage(ctx) {
   let withAgain = !!pref.again;
   let loadSeq = 0;
   let computedAll = []; // son hesaplanan siparişler (yazdırma mağaza mağaza buradan yapılır)
+  let assigns = {}; // sipariş anahtarı (k) → { n: teslim alan, c, s, at, by } — sitede kayıtlı "kim yaptı"
+  let assignSpan = ''; // yüklenen teslim kayıtlarının tarih aralığı
   const kp = karmaPref(); // karma ayrımı: "Sadece Şişe" / "Kutulu" (/ "Şişesiz") — kural Karma Ayıklama sayfasında
   let splitOn = karmaSplitOn();
   const splitOpt = () => ({ karmaRule: splitOn ? kp : null });
@@ -82,6 +84,8 @@ export default async function combosPage(ctx) {
   $('#tFrom').addEventListener('change', (e) => { tFrom = e.target.value; pickOrders(); });
   $('#tTo').addEventListener('change', (e) => { tTo = e.target.value; pickOrders(); });
   $('#min').addEventListener('change', (e) => { min = Math.max(1, Math.min(999, parseInt(e.target.value, 10) || 10)); e.target.value = min; savePref({ min }); compute(); renderPaste(); });
+  $('#body').addEventListener('click', (e) => { const b = e.target.closest('#teslimSave'); if (b) saveTeslim(b); });
+  $('#body').addEventListener('change', (e) => { if (e.target.id === 'teslimImport') { const f = [...e.target.files]; e.target.value = ''; importTeslim(f); } });
   $('#again').addEventListener('change', (e) => { withAgain = e.target.checked; savePref({ again: withAgain }); pickOrders(); });
   $('#rw').addEventListener('change', (e) => { includeRewards = e.target.checked; savePref({ rewards: includeRewards }); compute(); });
   $('#ksplit').addEventListener('change', (e) => { splitOn = e.target.checked; setKarmaSplit(splitOn); compute(); });
@@ -154,6 +158,78 @@ export default async function combosPage(ctx) {
     result = analyzeCombos(computed, state.ctx, { min, includeRewards, ...splitOpt() });
     render();
     if (pasted) renderPaste();
+    loadAssigns();
+  }
+
+  // ---------------------------------------------------------------- teslim alan (kim yaptı)
+  /** Görünen siparişlerin teslim kayıtları (tarih aralığı değiştiyse sunucudan) */
+  async function loadAssigns(force = false) {
+    const dates = computedAll.map((c) => c.order.date).filter(Boolean).sort();
+    if (!dates.length) return drawTeslim();
+    const span = `${dates[0]}|${dates[dates.length - 1]}`;
+    if (!force && span === assignSpan) return drawTeslim();
+    try {
+      const { map } = await api.get(`assign?from=${dates[0]}&to=${dates[dates.length - 1]}`);
+      assigns = map || {}; assignSpan = span;
+    } catch (e) { toast('Teslim kayıtları okunamadı: ' + e.message, 'err'); }
+    if (ctx.isCurrent()) drawTeslim();
+  }
+  /** Mağaza mağaza her kombinasyon satırı ve siparişleri (teslim listesi, sipariş bazında Excel ve içe aktarma aynı satırları kullanır) */
+  function teslimLines(sections = printSections()) {
+    const out = [];
+    for (const sc of sections) {
+      for (const g of sc.R.groups) out.push({ store: sc.name, label: g.label, key: g.key, karma: null, orders: g.orders, refs: g.refs });
+      for (const x of karmaParts(sc.R.karma)) out.push({ store: sc.name, label: x.label, key: null, karma: x.key, orders: x.orders, refs: x.groups.flatMap((g) => g.refs) });
+    }
+    return out;
+  }
+  /** Bir satırdaki siparişlerin kayıtlı teslim alanları: { one: tek isim ya da '', names: Map(ad → adet), missing } */
+  function whoOf(refs) {
+    const names = new Map(); let missing = 0;
+    for (const o of refs) { const a = assigns[o.k]; if (a && a.n) names.set(a.n, (names.get(a.n) || 0) + 1); else missing++; }
+    return { one: names.size === 1 && !missing ? [...names.keys()][0] : '', names, missing };
+  }
+  const whoText = (w) => [...w.names].map(([nm, c]) => (w.names.size > 1 || w.missing ? `${nm} (${c})` : nm)).join(', ');
+  let teslimRows = [];
+  const knownNames = () => { let a = []; try { a = JSON.parse(localStorage.getItem('et-names') || '[]'); } catch { /* yok */ } return [...new Set([...a, ...Object.values(assigns).map((x) => x.n)])].filter(Boolean).sort((x, y) => x.localeCompare(y, 'tr')); };
+  function drawTeslim() {
+    const box = $('#teslim');
+    if (!box) return;
+    teslimRows = teslimLines().map((l) => ({ ...l, who: whoOf(l.refs) }));
+    const done = teslimRows.filter((r) => r.who.one).length;
+    mount(box, html`<div class="card-h"><h2>Teslim alanlar</h2><span class="sub">Her kombinasyonu kim aldı? Yazıp kaydedin — isim o satırdaki her siparişe işlenir (sipariş bazında Excel'de görünür)</span><span class="spacer"></span>
+        <span class="badge ${done === teslimRows.length ? 'ok' : ''}">${n(done)} / ${n(teslimRows.length)} satır</span></div>
+      <datalist id="teslimNames">${knownNames().map((x) => html`<option value="${x}">`)}</datalist>
+      <div class="tw"><table class="t"><thead><tr><th>Mağaza</th><th>Kombinasyon</th><th class="num">Sipariş</th><th>Teslim alan</th></tr></thead><tbody>
+        ${teslimRows.map((r, i) => html`<tr${r.karma ? html` style="background:var(--surface-2)"` : ''}><td class="small nowrap">${r.store}</td><td class="small">${r.karma ? html`<b>${r.label}</b>` : r.label}</td><td class="num"><b>${n(r.orders)}</b></td>
+          <td><input class="input sm" data-tr="${i}" list="teslimNames" maxlength="60" value="${r.who.one}" placeholder="${r.who.names.size ? whoText(r.who) : 'Ad Soyad'}" style="width:220px">${!r.who.one && r.who.names.size ? html`<div class="muted xs">${r.who.missing ? `${n(r.who.missing)} siparişte isim yok · ` : ''}karışık: ${whoText(r.who)}</div>` : ''}</td></tr>`)}
+      </tbody></table></div>
+      <div class="card-f row wrap" style="gap:8px">
+        <span class="muted small">Doldurulmuş teslim listesi Excel'iniz varsa içe aktarın: site her satırı o günün siparişleriyle eşleştirir; sipariş adedi tutmayan satıra isim yazmaz.</span>
+        <span class="spacer"></span>
+        <label class="btn">${icon('upload')}Teslim listesi Excel'ini içe aktar<input type="file" id="teslimImport" accept=".xlsx" multiple hidden></label>
+        <button class="btn primary" id="teslimSave">${icon('check')}Teslim alanları kaydet</button>
+      </div>`);
+  }
+  async function saveTeslim(btn) {
+    const items = []; const used = new Set(); let rowsChanged = 0;
+    for (const inp of ctx.el.querySelectorAll('[data-tr]')) {
+      const r = teslimRows[+inp.dataset.tr];
+      const name = inp.value.trim();
+      if (name === r.who.one || (!name && !r.who.one)) continue; // değişmedi (boş bırakılan karışık satır olduğu gibi kalır)
+      rowsChanged++;
+      if (name) used.add(name);
+      for (const o of r.refs) items.push({ date: o.date, k: o.k, name, combo: r.label, store: r.store });
+    }
+    if (!items.length) return toast('Değişiklik yok', 'err');
+    busy(btn, true, 'Kaydediliyor…');
+    try {
+      const res = await api.post('assign', { items, summary: `${rowsChanged} kombinasyon satırı · ${rangeLabel(from, to)}` });
+      try { localStorage.setItem('et-names', JSON.stringify([...new Set([...knownNames(), ...used])].slice(-200))); } catch { /* yok */ }
+      toast(`${n(res.set)} siparişe teslim alan yazıldı${res.cleared ? `, ${n(res.cleared)} siparişten silindi` : ''}`, 'ok');
+      await loadAssigns(true);
+    } catch (e) { toast(e.message, 'err'); }
+    busy(btn, false);
   }
 
   function render() {
@@ -180,7 +256,9 @@ export default async function combosPage(ctx) {
           <div class="tw"><table class="t"><thead><tr><th>Ürün</th><th class="num">Adet</th></tr></thead><tbody>
             ${R.karma.products.map((p) => html`<tr><td class="small">${p.name}</td><td class="num"><b>${n(p.qty)}</b></td></tr>`)}</tbody></table></div>
         </div></div>` : ''}
+      <div class="card" id="teslim"></div>
     </div>`);
+    drawTeslim();
     ctx.el.querySelectorAll('.karmaRow').forEach((kr) => kr.addEventListener('click', () => $('#karmaBox').classList.toggle('hidden')));
   }
 
@@ -246,11 +324,134 @@ export default async function combosPage(ctx) {
         const kind = await askExcel();
         if (!kind) return;
         busy(btn, true, 'Hazırlanıyor…');
-        if (kind === 'print') await xlsPrintLike(); else await xlsLog();
+        if (kind === 'print') await xlsPrintLike(); else if (kind === 'orders') await xlsOrders(); else await xlsLog();
       }
     } catch (err) { toast(err.message, 'err'); }
     busy(btn, false);
   });
+
+  // ---------------------------------------------------------------- teslim listesi içe aktarma
+  // Doldurulmuş teslim listesi (TARİH · SAAT · MAĞAZA · KOMBİNASYON · SİPARİŞ ADEDİ · TESLİM ALAN) okunur; her satır o gün
+  // o saatte yüklenen, o mağazanın siparişleriyle yeniden kurulan kombinasyon listesinde aranır. Sipariş adedi tutmayan
+  // ya da bulunamayan satıra isim YAZILMAZ — kullanıcıya gösterilir (yanlış kişiye yazılmasın).
+  const cellVal = (v) => (v && typeof v === 'object' && !(v instanceof Date) ? (v.result !== undefined ? v.result : v.richText ? v.richText.map((t) => t.text).join('') : v.text || '') : v);
+  const ymdOf = (v) => {
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    if (typeof v === 'number' && v > 20000) return new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 864e5).toISOString().slice(0, 10);
+    const t = String(v || '').trim();
+    let m = t.match(/(\d{1,2})[./](\d{1,2})[./](\d{4})/); if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+    m = t.match(/(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : '';
+  };
+  const timesOf = (v) => {
+    const fmt = (mins) => `${pad(Math.floor(mins / 60) % 24)}:${pad(Math.round(mins % 60))}`;
+    if (v instanceof Date) { const x = fmt(v.getUTCHours() * 60 + v.getUTCMinutes() + Math.round(v.getUTCSeconds() / 60)); return [x, x]; }
+    if (typeof v === 'number' && v >= 0 && v < 1) { const x = fmt(Math.round(v * 1440)); return [x, x]; }
+    const all = String(v || '').match(/\d{1,2}[:.]\d{2}/g);
+    if (!all) return null;
+    const norm = all.map((x) => { const [h, mm] = x.split(/[:.]/); return `${h.padStart(2, '0')}:${mm}`; });
+    return [norm[0], norm[norm.length - 1]];
+  };
+  /** "Coconut Mix x1 + Detox Mix x2" → sitedeki bileşim anahtarı (ürün adları katalogla eşleştirilir) */
+  function keyOfLabel(label) {
+    const pos = new Map(state.ctx.products.map((p, i) => [p.id, i]));
+    const byLabel = new Map(state.ctx.products.map((p) => [fold(state.ctx.label(p.id)), p.id]));
+    const parts = [];
+    for (const raw of String(label).split('+')) {
+      const m = raw.trim().match(/^(.*?)\s*[x×]\s*(\d+)$/i);
+      if (!m) return null;
+      const id = byLabel.get(fold(m[1])) || state.ctx.match(m[1]).productId;
+      if (!id) return null;
+      const ex = parts.find((x) => x.id === id);
+      if (ex) ex.q += +m[2]; else parts.push({ id, q: +m[2], name: state.ctx.label(id) });
+    }
+    return parts.sort((a, b) => (pos.get(a.id) ?? 1e6) - (pos.get(b.id) ?? 1e6) || a.name.localeCompare(b.name, 'tr')).map((x) => `${x.id}*${x.q}`).join('+');
+  }
+  async function importTeslim(files) {
+    if (!files.length) return;
+    const rows = [];
+    try {
+      const ExcelJS = await excelLib();
+      for (const f of files) {
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.load(await f.arrayBuffer());
+        wb.eachSheet((ws) => {
+          let map = null;
+          ws.eachRow((row, rn) => {
+            const vals = row.values.slice(1).map(cellVal);
+            if (!map) {
+              const h = vals.map((v) => fold(String(v ?? '')).replace(/\s+/g, ' ').trim());
+              if (h.includes('kombinasyon') && h.some((x) => x.startsWith('teslim'))) map = { date: h.indexOf('tarih'), time: h.indexOf('saat'), store: h.findIndex((x) => x.startsWith('magaza')), combo: h.indexOf('kombinasyon'), count: h.findIndex((x) => x.startsWith('siparis')), name: h.findIndex((x) => x.startsWith('teslim')) };
+              return;
+            }
+            const g = (i) => (i >= 0 ? vals[i] : '');
+            const name = String(g(map.name) ?? '').trim();
+            const combo = String(g(map.combo) ?? '').trim();
+            if (!combo) return;
+            rows.push({ where: `${f.name} · ${rn}. satır`, date: ymdOf(g(map.date)), time: timesOf(g(map.time)), store: String(g(map.store) ?? '').trim(), combo, count: parseInt(g(map.count), 10) || null, name });
+          });
+        });
+      }
+    } catch (e) { return toast('Excel okunamadı: ' + e.message, 'err'); }
+    const withName = rows.filter((r) => r.name);
+    if (!withName.length) return toast(rows.length ? 'Dosyada TESLİM ALAN dolu satır yok' : 'Dosyada TARİH · SAAT · MAĞAZA · KOMBİNASYON · SİPARİŞ ADEDİ · TESLİM ALAN başlıkları bulunamadı', 'err');
+    const dates = [...new Set(withName.map((r) => r.date).filter(Boolean))].sort();
+    if (!dates.length) return toast('TARİH sütunu okunamadı', 'err');
+    toast('Siparişler okunuyor…');
+    const shift = (d, k) => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() + k); return localYmd(x.toISOString()); };
+    let pool;
+    try { pool = (await fetchOrders(shift(dates[0], -5), shift(dates[dates.length - 1], 1))).filter((o) => !o.summary && o.at); } catch (e) { return toast(e.message, 'err'); }
+    const cc = new Map();
+    const comp = (o) => { if (!cc.has(o.k)) cc.set(o.k, computeOrder(o, state.ctx)); return cc.get(o.k); };
+    const storeKey = (x) => fold(x).replace(/[^a-z0-9]/g, '');
+    const ok = [], bad = [];
+    const items = [];
+    const seen = new Set();
+    for (const r of withName) {
+      if (!r.date) { bad.push({ r, why: 'tarih okunamadı' }); continue; }
+      const sk = storeKey(r.store);
+      const cs = pool.filter((o) => localYmd(o.at) === r.date && (!r.time || (hhmm(o.at) >= r.time[0] && hhmm(o.at) <= r.time[1]))).map(comp)
+        .filter((c) => { const nm = storeKey(c.store ? c.store.name : c.order.sender); return !sk || nm === sk || nm.includes(sk) || sk.includes(nm); });
+      if (!cs.length) { bad.push({ r, why: 'o gün/saatte bu mağazanın yüklenen siparişi yok' }); continue; }
+      const lines = teslimLines([{ name: r.store, R: analyzeCombos(cs, state.ctx, { min, includeRewards, ...splitOpt() }) }]);
+      const fc = fold(r.combo);
+      let refs = null;
+      const exact = lines.find((l) => fold(l.label) === fc);
+      if (exact) refs = exact.refs;
+      else if (fc.startsWith('karma')) {
+        const karmaLines = lines.filter((l) => l.karma);
+        const named = karmaLines.find((l) => fc.includes(fold(karmaName(l.karma, kp))));
+        refs = named ? named.refs : karmaLines.length ? karmaLines.flatMap((l) => l.refs) : null;
+      } else {
+        const key = keyOfLabel(r.combo);
+        const hit = key && lines.find((l) => l.key === key);
+        if (hit) refs = hit.refs;
+      }
+      if (!refs) { bad.push({ r, why: 'bu kombinasyon o yüklemede yok' }); continue; }
+      if (r.count != null && r.count !== refs.length) { bad.push({ r, why: `sipariş adedi tutmuyor (Excel'de ${r.count}, sitede ${refs.length})` }); continue; }
+      ok.push({ r, n: refs.length });
+      for (const o of refs) { if (seen.has(o.k)) continue; seen.add(o.k); items.push({ date: o.date, k: o.k, name: r.name, combo: r.combo, store: r.store }); }
+    }
+    let go = false;
+    await modal({
+      title: 'Teslim listesi içe aktarma',
+      size: 'lg',
+      body: html`<div class="stack" style="gap:12px">
+        <div class="kpis"><div class="kpi hl"><div class="l">${icon('check')}Eşleşen satır</div><div class="v">${n(ok.length)}</div><div class="s">${n(items.length)} siparişe isim yazılacak</div></div>
+          <div class="kpi"><div class="l">${icon('alert')}Yazılmayacak satır</div><div class="v">${n(bad.length)}</div><div class="s">kontrol edin; gerekirse ekrandan elle girin</div></div></div>
+        ${bad.length ? html`<div class="tw" style="max-height:300px"><table class="t"><thead><tr><th>Satır</th><th>Kombinasyon</th><th>Teslim alan</th><th>Neden</th></tr></thead><tbody>
+          ${bad.map(({ r, why }) => html`<tr><td class="small nowrap">${r.where}<div class="muted xs">${r.date ? trD(r.date) : ''} ${r.time ? r.time.join('–') : ''} · ${r.store}</div></td><td class="small">${r.combo}</td><td class="small">${r.name}</td><td class="small unm">${why}</td></tr>`)}</tbody></table></div>` : ''}
+        <p class="muted small" style="margin:0">Eşleşme: o gün o saatte yüklenen (yalnızca yeni) siparişler, aynı mağaza ve kombinasyon, aynı sipariş adedi. Kayıtlı isimlerin üzerine yazılır.</p>
+      </div>`,
+      actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: `${n(items.length)} siparişe kaydet`, value: 'ok', variant: 'primary', icon: 'check' }],
+      onSubmit: (v) => { go = v === 'ok'; },
+    });
+    if (!go || !items.length) return;
+    try {
+      const res = await api.post('assign', { items, summary: `teslim listesi içe aktarma: ${ok.length} satır` });
+      toast(`${n(res.set)} siparişe teslim alan yazıldı`, 'ok');
+      await loadAssigns(true);
+    } catch (e) { toast(e.message, 'err'); }
+  }
 
   // ---------------------------------------------------------------- Excel biçimleri
   async function askExcel() {
@@ -260,9 +461,10 @@ export default async function combosPage(ctx) {
       body: html`<div class="stack" style="gap:10px">
         <p class="muted small" style="margin:0">Mağaza seçimi, tarih ve yükleme seçimi sayfadakiyle aynıdır.</p>
         <div class="callout info">${icon('printer')}<div class="c"><b>Çıktıdaki gibi</b>Mağaza mağaza bölümler, yazdırma ayarlarındaki sütunlar (Ürünler / Sipariş adedi / Ürün adedi ve eklediğiniz boş sütunlar) ve karma satırları. Düzenleyip yazdırmak için.</div></div>
-        <div class="callout info">${icon('sheet')}<div class="c"><b>Teslim listesi</b>Sütunlar: TARİH · SAAT · MAĞAZA · KOMBİNASYON · SİPARİŞ ADEDİ · TESLİM ALAN. Her mağazanın her kombinasyonu bir satır; tarih ve saat siparişlerin yüklendiği an. Kendi Excel'inize yapıştırmak için.</div></div>
+        <div class="callout info">${icon('sheet')}<div class="c"><b>Teslim listesi</b>Sütunlar: TARİH · SAAT · MAĞAZA · KOMBİNASYON · SİPARİŞ ADEDİ · TESLİM ALAN. Her mağazanın her kombinasyonu bir satır; tarih ve saat siparişlerin yüklendiği an; teslim alan sitede kayıtlıysa dolu gelir.</div></div>
+        <div class="callout info">${icon('receipt')}<div class="c"><b>Sipariş bazında</b>Her sipariş bir satır: TARİH · SAAT · MAĞAZA · SİPARİŞ / BARKOD NO (734… / 275…) · PTT BARKOD · KOMBİNASYON · TESLİM ALAN. Hangi siparişi kimin yaptığını bulmak için.</div></div>
       </div>`,
-      actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Çıktıdaki gibi', value: 'print', icon: 'printer' }, { label: 'Teslim listesi', value: 'log', variant: 'primary', icon: 'sheet' }],
+      actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Çıktıdaki gibi', value: 'print', icon: 'printer' }, { label: 'Sipariş bazında', value: 'orders', icon: 'receipt' }, { label: 'Teslim listesi', value: 'log', variant: 'primary', icon: 'sheet' }],
       onSubmit: (v) => { pick = v === 'cancel' ? null : v; },
     });
     return pick;
@@ -287,15 +489,32 @@ export default async function combosPage(ctx) {
     head.values = ['TARİH', 'SAAT', 'MAĞAZA', 'KOMBİNASYON', 'SİPARİŞ ADEDİ', 'TESLİM ALAN'];
     head.font = { bold: true };
     let r = 2;
-    for (const sc of printSections()) {
-      const lines = [...sc.R.groups.map((g) => ({ label: g.label, orders: g.orders, refs: g.refs })),
-        ...karmaParts(sc.R.karma).map((x) => ({ label: x.label, orders: x.orders, refs: x.groups.flatMap((g) => g.refs) }))];
-      for (const l of lines) {
-        const [d, t] = uploadedAt(l.refs);
-        ws.getRow(r++).values = [d, t, sc.name, l.label, l.orders, ''];
-      }
+    for (const l of teslimLines()) {
+      const [d, t] = uploadedAt(l.refs);
+      ws.getRow(r++).values = [d, t, l.store, l.label, l.orders, whoText(whoOf(l.refs))];
     }
     await excelSave(wb, `teslim-listesi_${fileStamp()}.xlsx`);
+  }
+  /** Sipariş bazında: her sipariş bir satır, numaraları ve teslim alanıyla */
+  async function xlsOrders() {
+    const ExcelJS = await excelLib();
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sipariş Bazında', { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.columns = [{ width: 13 }, { width: 9 }, { width: 24 }, { width: 22 }, { width: 18 }, { width: 18 }, { width: 56 }, { width: 22 }];
+    const head = ws.getRow(1);
+    head.values = ['TARİH', 'SAAT', 'MAĞAZA', 'SİPARİŞ / BARKOD NO', 'PTT BARKOD', 'PLATFORM SİPARİŞ NO', 'KOMBİNASYON', 'TESLİM ALAN'];
+    head.font = { bold: true };
+    let r = 2;
+    for (const l of teslimLines()) {
+      for (const o of l.refs.slice().sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')) || String(a.no).localeCompare(String(b.no)))) {
+        const [d, t] = uploadedAt([o]);
+        const a = assigns[o.k];
+        // Uzun numaralar metin olarak yazılır (Excel 734… gibi 16 haneli sayıları bozmasın)
+        ws.getRow(r++).values = [d, t, l.store, String(o.no || ''), String(o.cargoCode || ''), String(o.platformOrderNo || ''), l.label, a ? a.n : ''];
+      }
+    }
+    ws.getColumn(4).numFmt = '@'; ws.getColumn(5).numFmt = '@'; ws.getColumn(6).numFmt = '@';
+    await excelSave(wb, `siparis-bazinda_${fileStamp()}.xlsx`);
   }
   /** Çıktıdaki gibi: mağaza mağaza, yazdırma ayarlarındaki sütunlar ve boş sütunlar */
   async function xlsPrintLike() {

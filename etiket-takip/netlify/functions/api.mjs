@@ -678,6 +678,42 @@ export default async (req) => {
     if (path === 'orders' && m === 'GET') return await getOrders(url);
     if (path === 'days' && m === 'GET') return json({ days: (await listKeys('day/')).map((k) => k.slice(4)).sort() });
 
+    // ---------------------------------------------------------------- teslim alan (kim yaptı)
+    // Sipariş bazında: assign/<sipariş tarihi> → { [k]: { n: ad, c: kombinasyon, s: mağaza, at, by } }
+    if (path === 'assign' && m === 'POST') {
+      need(user, 'admin', 'personel');
+      const b = await body(req);
+      const items = (Array.isArray(b.items) ? b.items : []).slice(0, 20000)
+        .filter((x) => x && isYmd(x.date) && typeof x.k === 'string' && x.k && x.k.length <= 200);
+      if (!items.length) throw new HttpError(400, 'Kayıt yok');
+      const byDate = new Map();
+      for (const x of items) { if (!byDate.has(x.date)) byDate.set(x.date, []); byDate.get(x.date).push(x); }
+      if (byDate.size > 400) throw new HttpError(400, 'Çok fazla gün');
+      const at = nowIso();
+      let set = 0, cleared = 0;
+      await pmap([...byDate.keys()], 6, (date) => update(`assign/${date}`, (cur) => {
+        const map = cur && typeof cur === 'object' ? cur : {};
+        for (const x of byDate.get(date)) {
+          const name = str(x.name, 60);
+          if (!name) { if (map[x.k]) { delete map[x.k]; cleared++; } continue; }
+          map[x.k] = { n: name, c: str(x.combo, 160), s: str(x.store, 80), at, by: user.u };
+          set++;
+        }
+        return map;
+      }, {}));
+      await audit(user, 'teslim alan', `${set} siparişe isim yazıldı${cleared ? `, ${cleared} silindi` : ''}${b.summary ? ' — ' + str(b.summary, 200) : ''}`);
+      return json({ ok: true, set, cleared });
+    }
+    if (path === 'assign' && m === 'GET') {
+      const from = url.searchParams.get('from'), to = url.searchParams.get('to');
+      if (!isYmd(from) || !isYmd(to) || from > to) throw new HttpError(400, 'Tarih aralığı geçersiz');
+      const days = [];
+      for (let d = from; d <= to && days.length < 400; d = addDays(d, 1)) days.push(d);
+      const out = {};
+      await pmap(days, 12, async (d) => { const m2 = await getJSON(`assign/${d}`); if (m2) for (const [k, v] of Object.entries(m2)) out[k] = { ...v, date: d }; });
+      return json({ map: out });
+    }
+
     // ---------------------------------------------------------------- günlük dağıtım (zimmet)
     // Hangi etiket paketinin (P1, P2…) kime verildiği: dispatch/<tarih> altında, her kayıt bir dağıtım
     if (path === 'dispatch' && m === 'POST') {

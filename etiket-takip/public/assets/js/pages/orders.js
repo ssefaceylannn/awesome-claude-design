@@ -29,6 +29,7 @@ export async function openOrder(o, onChange) {
         <dt>Kargo</dt><dd>${o.cargo || '—'} ${o.cargoCode ? html`<code>${o.cargoCode}</code>` : ''}</dd>
         <dt>Etiket</dt><dd>${o.pages || 1} sayfa · ${o.file || ''}</dd>
         <dt>Yükleyen</dt><dd>${personName(o.by)} · ${trDateTime(o.at)}</dd>
+        <dt>Teslim alan</dt><dd id="asgInfo"><span class="muted">…</span></dd>
         <dt>Dağıtım</dt><dd id="dispInfo"><span class="muted">…</span></dd>
         <dt>Barkod kontrolü</dt><dd>${o.checked ? html`<span class="badge ok">${icon('check')} ${personName(o.checkedBy)} · ${trDateTime(o.checkedAt)}</span>` : html`<span class="badge">Kontrol edilmedi</span>`}</dd>
       </dl>
@@ -40,6 +41,12 @@ export async function openOrder(o, onChange) {
     actions,
     // Günlük Dağıtım kaydı: bu sipariş hangi pakette, kime verildi
     onOpen: (d) => {
+      // Kombinasyon Analizi'nde kaydedilen "teslim alan" (bu siparişi kim yaptı)
+      const ae = d.querySelector('#asgInfo');
+      if (o.date) api.get(`assign?from=${o.date}&to=${o.date}`).then(({ map }) => {
+        const a = map && map[o.k];
+        mount(ae, a ? html`<b>${a.n}</b> <span class="muted">· ${a.c || ''} · ${personName(a.by)} kaydetti, ${trDateTime(a.at)}</span>` : html`<span class="muted">Kayıt yok</span>`);
+      }).catch(() => { ae.textContent = '—'; });
       const el = d.querySelector('#dispInfo');
       const no = String(o.no || '').replace(/\s+/g, '');
       if (no.length < 6) { el.textContent = '—'; return; }
