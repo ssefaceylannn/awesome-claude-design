@@ -5,7 +5,7 @@ import { html, raw, mount, icon, n, toast, busy, emptyState, rangeLabel, multiSe
 import { api, state, fetchOrders, getRange } from '../core/api.js';
 import { fold } from '../shared/text.js';
 import { computeOrder } from '../shared/calc.js';
-import { analyzeCombos, parseComboPaste, KARMA } from '../shared/combos.js';
+import { analyzeCombos, parseComboPaste, comboOf, KARMA } from '../shared/combos.js';
 import { rangePicker, storeFilters, filterLabel } from '../core/widgets.js';
 import { exportTable, lib as excelLib, save as excelSave } from '../core/excel.js';
 import { paperById, paperPicker } from '../core/paper.js';
@@ -514,7 +514,7 @@ export default async function combosPage(ctx) {
         <p class="muted small" style="margin:0">Mağaza seçimi, tarih ve yükleme seçimi sayfadakiyle aynıdır.</p>
         <div class="callout info">${icon('printer')}<div class="c"><b>Çıktıdaki gibi</b>Mağaza mağaza bölümler, yazdırma ayarlarındaki sütunlar (Ürünler / Sipariş adedi / Ürün adedi ve eklediğiniz boş sütunlar) ve karma satırları. Düzenleyip yazdırmak için.</div></div>
         <div class="callout info">${icon('sheet')}<div class="c"><b>Teslim listesi</b>Sütunlar: TARİH · SAAT · MAĞAZA · KOMBİNASYON · SİPARİŞ ADEDİ · TESLİM ALAN. Her mağazanın her kombinasyonu bir satır; tarih ve saat siparişlerin yüklendiği an; teslim alan sitede kayıtlıysa dolu gelir.</div></div>
-        <div class="callout info">${icon('receipt')}<div class="c"><b>Sipariş bazında</b>Her sipariş bir satır: TARİH · SAAT · MAĞAZA · SİPARİŞ / BARKOD NO (734… / 275…) · PTT BARKOD · KOMBİNASYON · TESLİM ALAN. Hangi siparişi kimin yaptığını bulmak için.</div></div>
+        <div class="callout info">${icon('receipt')}<div class="c"><b>Sipariş bazında</b>Her sipariş bir satır: TARİH · SAAT · MAĞAZA · SİPARİŞ / BARKOD NO (734… / 275…) · PTT BARKOD · KOMBİNASYON · İÇERİK (siparişin kendi ürünleri) · TESLİM ALAN. Hangi siparişi kimin yaptığını bulmak için.</div></div>
       </div>`,
       actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Çıktıdaki gibi', value: 'print', icon: 'printer' }, { label: 'Sipariş bazında', value: 'orders', icon: 'receipt' }, { label: 'Teslim listesi', value: 'log', variant: 'primary', icon: 'sheet' }],
       onSubmit: (v) => { pick = v === 'cancel' ? null : v; },
@@ -553,9 +553,12 @@ export default async function combosPage(ctx) {
     const ExcelJS = await excelLib();
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Sipariş Bazında', { views: [{ state: 'frozen', ySplit: 1 }] });
-    ws.columns = [{ width: 13 }, { width: 9 }, { width: 24 }, { width: 22 }, { width: 18 }, { width: 18 }, { width: 56 }, { width: 22 }];
+    ws.columns = [{ width: 13 }, { width: 9 }, { width: 24 }, { width: 22 }, { width: 18 }, { width: 18 }, { width: 40 }, { width: 56 }, { width: 22 }];
     const head = ws.getRow(1);
-    head.values = ['TARİH', 'SAAT', 'MAĞAZA', 'SİPARİŞ / BARKOD NO', 'PTT BARKOD', 'PLATFORM SİPARİŞ NO', 'KOMBİNASYON', 'TESLİM ALAN'];
+    head.values = ['TARİH', 'SAAT', 'MAĞAZA', 'SİPARİŞ / BARKOD NO', 'PTT BARKOD', 'PLATFORM SİPARİŞ NO', 'KOMBİNASYON', 'İÇERİK', 'TESLİM ALAN'];
+    // İÇERİK: siparişin kendi ürünleri ve adetleri (karma satırlarında da gerçek içerik görünsün)
+    const byK = new Map(computedAll.map((c) => [c.order.k, c]));
+    const icerik = (o) => { const c = byK.get(o.k) || computeOrder(o, state.ctx); return comboOf(c, state.ctx).label; };
     head.font = { bold: true };
     let r = 2;
     for (const l of teslimLines()) {
@@ -563,7 +566,7 @@ export default async function combosPage(ctx) {
         const [d, t] = uploadedAt([o]);
         const a = assigns[o.k];
         // Uzun numaralar metin olarak yazılır (Excel 734… gibi 16 haneli sayıları bozmasın)
-        ws.getRow(r++).values = [d, t, l.store, String(o.no || ''), String(o.cargoCode || ''), String(o.platformOrderNo || ''), l.label, a ? a.n : ''];
+        ws.getRow(r++).values = [d, t, l.store, String(o.no || ''), String(o.cargoCode || ''), String(o.platformOrderNo || ''), l.label, icerik(o), a ? a.n : ''];
       }
     }
     ws.getColumn(4).numFmt = '@'; ws.getColumn(5).numFmt = '@'; ws.getColumn(6).numFmt = '@';
