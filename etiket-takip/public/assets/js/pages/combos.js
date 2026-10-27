@@ -183,26 +183,44 @@ export default async function combosPage(ctx) {
     }
     return out;
   }
-  /** Bir satırdaki siparişlerin kayıtlı teslim alanları: { one: tek isim ya da '', names: Map(ad → adet), missing } */
-  function whoOf(refs) {
-    const names = new Map(); let missing = 0;
-    for (const o of refs) { const a = assigns[o.k]; if (a && a.n) names.set(a.n, (names.get(a.n) || 0) + 1); else missing++; }
-    return { one: names.size === 1 && !missing ? [...names.keys()][0] : '', names, missing };
+  /**
+   * Kombinasyon satırlarını teslim alana göre böler: siparişleri farklı kişilere yazılmış satır, her kişi için ayrı
+   * satır olur (tek isim + o kişinin sipariş adedi — e-tablodaki açılır listeye uygun); isimsiz siparişler ayrı satırda.
+   */
+  function splitByName(lines) {
+    const out = [];
+    for (const l of lines) {
+      const by = new Map();
+      for (const o of l.refs) { const nm = (assigns[o.k] && assigns[o.k].n) || ''; if (!by.has(nm)) by.set(nm, []); by.get(nm).push(o); }
+      const names = [...by.keys()].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b, 'tr'));
+      for (const nm of names) out.push({ ...l, name: nm, refs: by.get(nm), orders: by.get(nm).length });
+    }
+    return out;
   }
-  const whoText = (w) => [...w.names].map(([nm, c]) => (w.names.size > 1 || w.missing ? `${nm} (${c})` : nm)).join(', ');
+  /** Teslim kayıtlarını 4000'lik parçalar hâlinde gönderir (çok sipariş olsa da hepsi kaydedilir) */
+  async function postAssign(items, summary, onProgress) {
+    const tot = { set: 0, cleared: 0 };
+    const CH = 4000;
+    for (let i = 0; i < items.length; i += CH) {
+      onProgress && onProgress(Math.min(i + CH, items.length), items.length);
+      const part = await api.post('assign', { items: items.slice(i, i + CH), summary: items.length > CH ? `${summary} (${i / CH + 1}/${Math.ceil(items.length / CH)})` : summary });
+      tot.set += part.set || 0; tot.cleared += part.cleared || 0;
+    }
+    return tot;
+  }
   let teslimRows = [];
   const knownNames = () => { let a = []; try { a = JSON.parse(localStorage.getItem('et-names') || '[]'); } catch { /* yok */ } return [...new Set([...a, ...Object.values(assigns).map((x) => x.n)])].filter(Boolean).sort((x, y) => x.localeCompare(y, 'tr')); };
   function drawTeslim() {
     const box = $('#teslim');
     if (!box) return;
-    teslimRows = teslimLines().map((l) => ({ ...l, who: whoOf(l.refs) }));
-    const done = teslimRows.filter((r) => r.who.one).length;
-    mount(box, html`<div class="card-h"><h2>Teslim alanlar</h2><span class="sub">Her kombinasyonu kim aldı? Yazıp kaydedin — isim o satırdaki her siparişe işlenir (sipariş bazında Excel'de görünür)</span><span class="spacer"></span>
+    teslimRows = splitByName(teslimLines());
+    const done = teslimRows.filter((r) => r.name).length;
+    mount(box, html`<div class="card-h"><h2>Teslim alanlar</h2><span class="sub">Her kombinasyonu kim aldı? Yazıp kaydedin — isim o satırdaki her siparişe işlenir. Aynı kombinasyonu birden fazla kişi aldıysa her kişi ayrı satırda görünür.</span><span class="spacer"></span>
         <span class="badge ${done === teslimRows.length ? 'ok' : ''}">${n(done)} / ${n(teslimRows.length)} satır</span></div>
       <datalist id="teslimNames">${knownNames().map((x) => html`<option value="${x}">`)}</datalist>
       <div class="tw"><table class="t"><thead><tr><th>Mağaza</th><th>Kombinasyon</th><th class="num">Sipariş</th><th>Teslim alan</th></tr></thead><tbody>
         ${teslimRows.map((r, i) => html`<tr${r.karma ? html` style="background:var(--surface-2)"` : ''}><td class="small nowrap">${r.store}</td><td class="small">${r.karma ? html`<b>${r.label}</b>` : r.label}</td><td class="num"><b>${n(r.orders)}</b></td>
-          <td><input class="input sm" data-tr="${i}" list="teslimNames" maxlength="60" value="${r.who.one}" placeholder="${r.who.names.size ? whoText(r.who) : 'Ad Soyad'}" style="width:220px">${!r.who.one && r.who.names.size ? html`<div class="muted xs">${r.who.missing ? `${n(r.who.missing)} siparişte isim yok · ` : ''}karışık: ${whoText(r.who)}</div>` : ''}</td></tr>`)}
+          <td><input class="input sm" data-tr="${i}" list="teslimNames" maxlength="60" value="${r.name}" placeholder="Ad Soyad" style="width:220px"></td></tr>`)}
       </tbody></table></div>
       <div class="card-f row wrap" style="gap:8px">
         <span class="muted small">Doldurulmuş teslim listesi Excel'iniz varsa içe aktarın: site her satırı o günün siparişleriyle eşleştirir; sipariş adedi tutmayan satıra isim yazmaz.</span>
@@ -216,7 +234,7 @@ export default async function combosPage(ctx) {
     for (const inp of ctx.el.querySelectorAll('[data-tr]')) {
       const r = teslimRows[+inp.dataset.tr];
       const name = inp.value.trim();
-      if (name === r.who.one || (!name && !r.who.one)) continue; // değişmedi (boş bırakılan karışık satır olduğu gibi kalır)
+      if (name === r.name) continue; // değişmedi
       rowsChanged++;
       if (name) used.add(name);
       for (const o of r.refs) items.push({ date: o.date, k: o.k, name, combo: r.label, store: r.store });
@@ -224,7 +242,7 @@ export default async function combosPage(ctx) {
     if (!items.length) return toast('Değişiklik yok', 'err');
     busy(btn, true, 'Kaydediliyor…');
     try {
-      const res = await api.post('assign', { items, summary: `${rowsChanged} kombinasyon satırı · ${rangeLabel(from, to)}` });
+      const res = await postAssign(items, `${rowsChanged} kombinasyon satırı · ${rangeLabel(from, to)}`, (d, t) => { btn.lastChild.textContent = `Kaydediliyor… ${n(d)}/${n(t)}`; });
       try { localStorage.setItem('et-names', JSON.stringify([...new Set([...knownNames(), ...used])].slice(-200))); } catch { /* yok */ }
       toast(`${n(res.set)} siparişe teslim alan yazıldı${res.cleared ? `, ${n(res.cleared)} siparişten silindi` : ''}`, 'ok');
       await loadAssigns(true);
@@ -392,8 +410,8 @@ export default async function combosPage(ctx) {
         });
       }
     } catch (e) { return toast('Excel okunamadı: ' + e.message, 'err'); }
-    const withName = rows.filter((r) => r.name);
-    if (!withName.length) return toast(rows.length ? 'Dosyada TESLİM ALAN dolu satır yok' : 'Dosyada TARİH · SAAT · MAĞAZA · KOMBİNASYON · SİPARİŞ ADEDİ · TESLİM ALAN başlıkları bulunamadı', 'err');
+    if (!rows.length) return toast('Dosyada TARİH · SAAT · MAĞAZA · KOMBİNASYON · SİPARİŞ ADEDİ · TESLİM ALAN başlıkları bulunamadı', 'err');
+    const withName = rows; // isimsiz satırlar da işlenir: pencerede isim yazılabilir
     const dates = [...new Set(withName.map((r) => r.date).filter(Boolean))].sort();
     if (!dates.length) return toast('TARİH sütunu okunamadı', 'err');
     toast('Siparişler okunuyor…');
@@ -403,13 +421,22 @@ export default async function combosPage(ctx) {
     const cc = new Map();
     const comp = (o) => { if (!cc.has(o.k)) cc.set(o.k, computeOrder(o, state.ctx)); return cc.get(o.k); };
     const storeKey = (x) => fold(x).replace(/[^a-z0-9]/g, '');
-    const ok = [], bad = [];
+    const ok = [], bad = [], fix = []; // fix: siparişleri bulunan ama ismi eksik / adedi farklı satırlar (pencerede yazılır)
     const items = [];
     const seen = new Set();
     for (const r of withName) {
       if (!r.date) { bad.push({ r, why: 'tarih okunamadı' }); continue; }
       const sk = storeKey(r.store);
-      const cs = pool.filter((o) => localYmd(o.at) === r.date && (!r.time || (hhmm(o.at) >= r.time[0] && hhmm(o.at) <= r.time[1]))).map(comp)
+      // Saat verilmişse: o saatte kaydedilen yükleme(ler)in bütün yeni siparişleri (büyük yükleme dakika değişirken
+      // kaydedilse de hepsi alınır); saat yoksa o gün yüklenen bütün yeni siparişler
+      const dayOrders = pool.filter((o) => localYmd(o.at) === r.date);
+      let picked = dayOrders;
+      if (r.time) {
+        const atTime = dayOrders.filter((o) => hhmm(o.at) >= r.time[0] && hhmm(o.at) <= r.time[1]);
+        const bs = new Set(atTime.map((o) => o.batch).filter(Boolean));
+        picked = bs.size ? dayOrders.filter((o) => bs.has(o.batch)) : atTime;
+      }
+      const cs = picked.map(comp)
         .filter((c) => { const nm = storeKey(c.store ? c.store.name : c.order.sender); return !sk || nm === sk || nm.includes(sk) || sk.includes(nm); });
       if (!cs.length) { bad.push({ r, why: 'o gün/saatte bu mağazanın yüklenen siparişi yok' }); continue; }
       // Liste kampanyasız ya da (ilk günlerdeki gibi) kampanya ürünleri dahil alınmış olabilir: ikisinde de aranır.
@@ -431,27 +458,48 @@ export default async function combosPage(ctx) {
       const found = tries.filter(Boolean);
       const refs = found.find((x) => r.count == null || x.length === r.count) || null;
       if (!found.length) { bad.push({ r, why: 'bu kombinasyon o yüklemede yok' }); continue; }
-      if (!refs) { bad.push({ r, why: `sipariş adedi tutmuyor (Excel'de ${r.count}, sitede ${found.map((x) => x.length).join(' / ')})` }); continue; }
+      if (!refs) { fix.push({ r, refs: found[0], why: 'adet farklı' }); continue; }
+      if (!r.name) { fix.push({ r, refs, why: 'isim eksik' }); continue; }
       ok.push({ r, n: refs.length });
       for (const o of refs) { if (seen.has(o.k)) continue; seen.add(o.k); items.push({ date: o.date, k: o.k, name: r.name, combo: r.combo, store: r.store }); }
     }
     let go = false;
+    const fixNames = new Map();
     await modal({
       title: 'Teslim listesi içe aktarma',
       size: 'lg',
       body: html`<div class="stack" style="gap:12px">
+        <datalist id="impNames">${[...new Set([...knownNames(), ...rows.map((r) => r.name).filter(Boolean)])].sort((a, b) => a.localeCompare(b, 'tr')).map((x) => html`<option value="${x}">`)}</datalist>
         <div class="kpis"><div class="kpi hl"><div class="l">${icon('check')}Eşleşen satır</div><div class="v">${n(ok.length)}</div><div class="s">${n(items.length)} siparişe isim yazılacak</div></div>
-          <div class="kpi"><div class="l">${icon('alert')}Yazılmayacak satır</div><div class="v">${n(bad.length)}</div><div class="s">kontrol edin; gerekirse ekrandan elle girin</div></div></div>
-        ${bad.length ? html`<div class="tw" style="max-height:300px"><table class="t"><thead><tr><th>Satır</th><th>Kombinasyon</th><th>Teslim alan</th><th>Neden</th></tr></thead><tbody>
-          ${bad.map(({ r, why }) => html`<tr><td class="small nowrap">${r.where}<div class="muted xs">${r.date ? trD(r.date) : ''} ${r.time ? r.time.join('–') : ''} · ${r.store}</div></td><td class="small">${r.combo}</td><td class="small">${r.name}</td><td class="small unm">${why}</td></tr>`)}</tbody></table></div>` : ''}
-        <p class="muted small" style="margin:0">Eşleşme: o gün o saatte yüklenen (yalnızca yeni) siparişler, aynı mağaza ve kombinasyon, aynı sipariş adedi. Kayıtlı isimlerin üzerine yazılır.</p>
+          <div class="kpi"><div class="l">${icon('edit')}Kontrol edilecek</div><div class="v">${n(fix.length)}</div><div class="s">ismi eksik ya da adedi farklı — aşağıda yazın</div></div>
+          <div class="kpi"><div class="l">${icon('alert')}Bulunamayan</div><div class="v">${n(bad.length)}</div><div class="s">sitede bu kombinasyon yok</div></div></div>
+        ${fix.length ? html`<div><b class="small">İsmi eksik ya da adedi farklı satırlar</b> <span class="muted small">— isim yazarsanız sitede bulunan siparişlerin hepsine yazılır; boş bırakılan satır kaydedilmez</span>
+          <div class="tw" style="max-height:340px;margin-top:6px"><table class="t"><thead><tr><th>Tarih · Mağaza</th><th>Kombinasyon</th><th class="num">Excel</th><th class="num">Site</th><th>Teslim alan</th></tr></thead><tbody>
+          ${fix.map((x, i) => html`<tr><td class="small nowrap">${x.r.date ? trD(x.r.date) : ''}${x.r.time ? ' ' + x.r.time[0] : ''}<div class="muted xs">${x.r.store}</div></td><td class="small">${x.r.combo}</td>
+            <td class="num ${x.why === 'adet farklı' ? 'unm' : ''}">${x.r.count ?? '—'}</td><td class="num"><b>${n(x.refs.length)}</b></td>
+            <td><input class="input sm" data-fix="${i}" list="impNames" maxlength="60" value="${x.r.name}" placeholder="Ad Soyad" style="width:190px"></td></tr>`)}</tbody></table></div></div>` : ''}
+        ${bad.length ? html`<details><summary class="small" style="cursor:pointer">Bulunamayan satırlar (${bad.length})</summary><div class="tw" style="max-height:220px;margin-top:6px"><table class="t"><tbody>
+          ${bad.map(({ r, why }) => html`<tr><td class="small nowrap">${r.where}<div class="muted xs">${r.date ? trD(r.date) : ''} · ${r.store}</div></td><td class="small">${r.combo}</td><td class="small">${r.name}</td><td class="small unm">${why}</td></tr>`)}</tbody></table></div></details>` : ''}
       </div>`,
-      actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: `${n(items.length)} siparişe kaydet`, value: 'ok', variant: 'primary', icon: 'check' }],
-      onSubmit: (v) => { go = v === 'ok'; },
+      actions: [{ label: 'Vazgeç', value: 'cancel' }, { label: 'Kaydet', value: 'ok', variant: 'primary', icon: 'check' }],
+      onSubmit: (v, d) => {
+        go = v === 'ok';
+        if (go) d.querySelectorAll('[data-fix]').forEach((inp) => fixNames.set(+inp.dataset.fix, inp.value.trim()));
+      },
     });
-    if (!go || !items.length) return;
+    if (!go) return;
+    // Pencerede yazılan isimler: o satırın sitede bulunan siparişlerine
+    let fixed = 0;
+    fix.forEach((x, i) => {
+      const name = fixNames.get(i);
+      if (!name) return;
+      fixed++;
+      for (const o of x.refs) { if (seen.has(o.k)) continue; seen.add(o.k); items.push({ date: o.date, k: o.k, name, combo: x.r.combo, store: x.r.store }); }
+    });
+    if (!items.length) return toast('Kaydedilecek isim yok', 'err');
     try {
-      const res = await api.post('assign', { items, summary: `teslim listesi içe aktarma: ${ok.length} satır` });
+      toast('Kaydediliyor…');
+      const res = await postAssign(items, `teslim listesi içe aktarma: ${ok.length + fixed} satır`);
       toast(`${n(res.set)} siparişe teslim alan yazıldı`, 'ok');
       await loadAssigns(true);
     } catch (e) { toast(e.message, 'err'); }
@@ -493,9 +541,10 @@ export default async function combosPage(ctx) {
     head.values = ['TARİH', 'SAAT', 'MAĞAZA', 'KOMBİNASYON', 'SİPARİŞ ADEDİ', 'TESLİM ALAN'];
     head.font = { bold: true };
     let r = 2;
-    for (const l of teslimLines()) {
+    // Birden fazla kişiye gitmiş kombinasyon: her kişi ayrı satır, tek isim (açılır listeye uygun)
+    for (const l of splitByName(teslimLines())) {
       const [d, t] = uploadedAt(l.refs);
-      ws.getRow(r++).values = [d, t, l.store, l.label, l.orders, whoText(whoOf(l.refs))];
+      ws.getRow(r++).values = [d, t, l.store, l.label, l.orders, l.name];
     }
     await excelSave(wb, `teslim-listesi_${fileStamp()}.xlsx`);
   }

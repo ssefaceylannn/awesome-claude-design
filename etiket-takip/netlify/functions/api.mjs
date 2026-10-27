@@ -683,7 +683,9 @@ export default async (req) => {
     if (path === 'assign' && m === 'POST') {
       need(user, 'admin', 'personel');
       const b = await body(req);
-      const items = (Array.isArray(b.items) ? b.items : []).slice(0, 20000)
+      // Sessizce kesilmez: istemci 4000'lik parçalar hâlinde gönderir; fazlası açık hata verir
+      if (Array.isArray(b.items) && b.items.length > 5000) throw new HttpError(413, 'Bir seferde en çok 5000 sipariş gönderilebilir');
+      const items = (Array.isArray(b.items) ? b.items : [])
         .filter((x) => x && isYmd(x.date) && typeof x.k === 'string' && x.k && x.k.length <= 200);
       if (!items.length) throw new HttpError(400, 'Kayıt yok');
       const byDate = new Map();
