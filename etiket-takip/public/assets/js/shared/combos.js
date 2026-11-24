@@ -9,7 +9,8 @@ export const KARMA = 'Karma Siparişler';
 /**
  * Siparişin bileşimi. computed = computeOrder() sonucu.
  * Ürün satırları birleştirilir (aynı ürün iki satırda → toplam adet); eşleşmeyen adlar "⚠ ad" olarak kalır.
- * includeRewards: kampanyayla eklenen ürünler de pakete dahil sayılır.
+ * includeRewards: kampanyayla eklenen ürünler de pakete dahil sayılır — true: bütün kampanyalar,
+ *   Set: yalnızca bu kampanya kimliklerinin hediyeleri (kombinasyon ekranında kampanya kampanya seçilir).
  */
 export function comboOf(c, ctx, { includeRewards = false } = {}) {
   const parts = new Map();
@@ -24,7 +25,7 @@ export function comboOf(c, ctx, { includeRewards = false } = {}) {
     if (l.productId) add(l.productId, ctx.label(l.productId), l.units, pos.get(l.productId) ?? 1e6);
     else add('?' + fold(l.raw), '⚠ ' + l.raw, l.units, 2e6);
   }
-  if (includeRewards) for (const r of c.rewards) if (r.productId) add(r.productId, ctx.label(r.productId), r.qty, pos.get(r.productId) ?? 1e6);
+  if (includeRewards) for (const r of c.rewards) if (r.productId && (includeRewards === true || (includeRewards.has && includeRewards.has(r.campaignId)))) add(r.productId, ctx.label(r.productId), r.qty, pos.get(r.productId) ?? 1e6);
   const list = [...parts.values()].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name, 'tr'));
   return {
     key: list.map((p) => `${p.id}*${p.qty}`).join('+'),

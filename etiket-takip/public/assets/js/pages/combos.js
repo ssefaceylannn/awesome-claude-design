@@ -23,7 +23,11 @@ export default async function combosPage(ctx) {
   let { from, to } = getRange();
   let filter = { storeIds: [], platforms: [] };
   let min = Math.max(1, +pref.min || 10);
-  let includeRewards = !!pref.rewards;
+  // Kombinasyona dahil edilecek kampanyalar (yalnızca bu sayfayı etkiler; bu tarayıcıda hatırlanır).
+  // Eski "kampanya ürünlerini dahil et" işaretliyse başlangıçta bütün aktif kampanyalar seçili gelir.
+  const campList = (state.config.campaigns || []).filter((c) => c.active !== false);
+  let rwCamps = Array.isArray(pref.rwCamps) ? pref.rwCamps.filter((id) => campList.some((c) => c.id === id)) : (pref.rewards ? campList.map((c) => c.id) : []);
+  let includeRewards = rwCamps.length ? new Set(rwCamps) : false;
   // boş = tüm yüklemeler; Etiket Yükle'den "kombinasyon listesini aç" ile gelinirse o yükleme seçili açılır
   let batchIds = ctx.params.batch && /^[0-9a-z-]{10,40}$/.test(ctx.params.batch) ? [ctx.params.batch] : [];
   let tFrom = '', tTo = '';
@@ -57,7 +61,7 @@ export default async function combosPage(ctx) {
         <label class="f">Yükleme saati<div class="row" style="gap:6px"><input type="time" class="input sm" id="tFrom" style="width:110px"><span class="muted">–</span><input type="time" class="input sm" id="tTo" style="width:110px"></div></label>
         <label class="f">En az sipariş <span class="hint">altı karmaya</span><input type="number" class="input sm" id="min" min="1" max="999" value="${min}" style="width:90px"></label>
         <label class="check small" style="margin-bottom:6px" title="Yükleme ya da saat seçiliyken geçerlidir"><input type="checkbox" id="again" ${withAgain ? 'checked' : ''}> Yüklemede yeniden gelen (daha önce kaydedilmiş) siparişleri de say</label>
-        <label class="check small" style="margin-bottom:6px"><input type="checkbox" id="rw" ${includeRewards ? 'checked' : ''}> Kampanya ürünlerini pakete dahil et</label>
+        <label class="f">Kombinasyona dahil kampanyalar <span class="hint">yalnızca bu sayfa</span><div id="rw" style="width:260px"></div></label>
         <label class="check small" style="margin-bottom:6px" title="Kategoriler ve grup adları Karma Ayıklama sayfasından değiştirilir"><input type="checkbox" id="ksplit" ${splitOn ? 'checked' : ''}> Karmayı ayır: ${['only', 'rest', ...(kp.third ? ['none'] : [])].map((k, i) => html`${i ? ' / ' : ''}<b>${kp.names[k]}</b>`)} <a href="#/karma" class="muted">(kural: Etiket Ayıklama)</a></label>
       </div></div>
       <div id="body" style="margin-top:16px"></div>
@@ -87,7 +91,12 @@ export default async function combosPage(ctx) {
   $('#body').addEventListener('click', (e) => { const b = e.target.closest('#teslimSave'); if (b) saveTeslim(b); });
   $('#body').addEventListener('change', (e) => { if (e.target.id === 'teslimImport') { const f = [...e.target.files]; e.target.value = ''; importTeslim(f); } });
   $('#again').addEventListener('change', (e) => { withAgain = e.target.checked; savePref({ again: withAgain }); pickOrders(); });
-  $('#rw').addEventListener('change', (e) => { includeRewards = e.target.checked; savePref({ rewards: includeRewards }); compute(); });
+  multiSelect($('#rw'), {
+    options: campList.map((c) => ({ id: c.id, label: c.name })),
+    selected: rwCamps,
+    allLabel: campList.length ? 'Kampanya dahil değil' : 'Aktif kampanya yok',
+    onChange: (v) => { rwCamps = v; includeRewards = v.length ? new Set(v) : false; savePref({ rwCamps: v, rewards: !!v.length }); compute(); },
+  });
   $('#ksplit').addEventListener('change', (e) => { splitOn = e.target.checked; setKarmaSplit(splitOn); compute(); });
 
   // Seçili tarihlerdeki yüklemeler (saatleriyle) — yeniden çizilebilsin diye her seferinde yeni kap
@@ -476,7 +485,8 @@ export default async function combosPage(ctx) {
         const hit = key && lines.find((l) => l.key === key);
         return hit ? hit.refs : null;
       };
-      const tries = [includeRewards, !includeRewards].map((rw) => findIn(teslimLines([{ name: r.store, R: analyzeCombos(cs, state.ctx, { min, includeRewards: rw, ...splitOpt() }) }])));
+      // Sırayla: sayfadaki seçim, kampanyasız, bütün kampanyalar dahil (eski listeler farklı ayarla basılmış olabilir)
+      const tries = [includeRewards, false, campList.length ? new Set(campList.map((c) => c.id)) : false].map((rw) => findIn(teslimLines([{ name: r.store, R: analyzeCombos(cs, state.ctx, { min, includeRewards: rw, ...splitOpt() }) }])));
       const found = tries.filter(Boolean);
       const refs = found.find((x) => r.count == null || x.length === r.count) || null;
       if (!found.length) { bad.push({ r, why: 'bu kombinasyon o yüklemede yok' }); continue; }

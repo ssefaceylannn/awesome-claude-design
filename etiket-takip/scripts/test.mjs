@@ -157,6 +157,23 @@ await test('Şehre göre ayırma: etiketteki "İLÇE / İL" metninden il bulunur
   assert.equal(classifyCity('KADIKÖY / İSTANBUL', karmaRule({ cities: ['Düzce', 'İstanbul'] })).group, 'in');
 });
 
+await test('Kombinasyon: kampanya seçimi — yalnızca seçilen kampanyaların hediyesi bileşime girer', async () => {
+  const { analyzeCombos } = await import('../public/assets/js/shared/combos.js');
+  const ps = [{ id: 'z', name: 'Zencefil Shot' }, { id: 'd', name: 'Detox Mix' }];
+  const stores = [{ id: 'do', name: 'Daily Organics Trendyol', platform: 'trendyol', senders: ['Daily Organics Trendyol'] }, { id: 'mt', name: 'Momordica Trendyol', platform: 'trendyol', senders: ['Momordica Trendyol'] }];
+  const camp = (id, store) => ({ id, name: id, active: true, condition: 'qty', countMode: 'each', mode: 'once', minQty: 2, maxQty: 0, pureOnly: true, rewards: [{ productId: null, qty: 1 }], storeIds: [store], platforms: [], triggerProductIds: [] });
+  const ctx = createContext({ products: ps, stores, campaigns: [camp('cDO', 'do'), camp('cMT', 'mt')], aliases: {}, settings: {} });
+  const mk = (k, sender) => computeOrder({ k, sender, items: [{ name: 'Zencefil Shot', qty: 2 }] }, ctx);
+  const cs = [mk('1', 'Daily Organics Trendyol'), mk('2', 'Momordica Trendyol')];
+  const labels = (rw) => analyzeCombos(cs, ctx, { min: 1, includeRewards: rw }).groups.map((g) => g.label).sort();
+  assert.deepEqual(labels(false), ['Zencefil Shot x2']);
+  assert.deepEqual(labels(true), ['Zencefil Shot x3']);
+  assert.deepEqual(labels(new Set(['cDO'])), ['Zencefil Shot x2', 'Zencefil Shot x3']); // yalnızca Daily Organics kampanyası
+  assert.deepEqual(labels(new Set()), ['Zencefil Shot x2']);
+  // Kampanyanın kendisi (siparişe hediye) değişmez: seçim yalnızca bileşim adını etkiler
+  assert.equal(cs[1].rewards.length, 1);
+});
+
 await test('Hepsiburada CSV: paket = sipariş, satır başına kalem, adet sütundan, mağaza A1\'den', async () => {
   const { parseCsv, readTable } = await import('../public/assets/js/core/sheets.js');
   const head = 'Barkod;Paket Numarası;Kargo Firması;Sipariş Tarihi;Kargo Takip No;Sipariş Numarası;Kalem Numarası;Alıcı;Şehir;Semt;Hepsiburada Ürün Kodu;Satıcı Stok Kodu;Ürün Adı;Adet;Faturalandırılacak Satış Fiyatı;Paket Durumu';
