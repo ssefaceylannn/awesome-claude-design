@@ -4,7 +4,7 @@ import { html, mount, icon, n, toast, busy, emptyState, rangeLabel, trDateTime, 
 import { api, state, fetchOrders, getRange, isAdmin, saveSection } from '../core/api.js';
 import { computeOrder } from '../shared/calc.js';
 import { parseCsv } from '../shared/csv.js';
-import { parseStockRows, matchStock, checkStock, DEFAULT_STOCK_TIMES, STOCK_TIME_RANGE } from '../shared/stock.js';
+import { parseStockRows, matchStock, checkStock, DEFAULT_STOCK_TIMES, STOCK_TIME_RANGE, fullStockList } from '../shared/stock.js';
 import { rangePicker } from '../core/widgets.js';
 import { exportSheets } from '../core/excel.js';
 
@@ -220,7 +220,10 @@ export default async function stockPage(ctx) {
     const shortRows = R.rows.filter((r) => r.short > 0);
     const rows = view === 'short' ? shortRows : R.rows;
     const notIn = [...R.notInSheet].map(([id, u]) => ({ id, u })).sort((a, b) => b.u - a.u);
-    const tabs = [['short', `Yetmeyen ürünler (${shortRows.length})`], ['all', `Tüm ürünler (${R.rows.length})`], ['blocked', `Çıkmayacak siparişler (${n(R.blocked.length)})`], ['missing', `Tabloda bulunamayan (${notIn.length})`]];
+    const full = fullStockList(state.ctx.products, stock, sheet.items, R.rows, R.notInSheet);
+    const fq = stockQ.toLocaleLowerCase('tr-TR');
+    const fullView = full.filter((r) => (!fq || (r.name + ' ' + r.sku).toLocaleLowerCase('tr-TR').includes(fq)) && (stockFilter === 'all' || (stockFilter === 'ordered' ? r.need > 0 : stockFilter === 'zero' ? r.inSheet && r.stock <= 0 : stockFilter === 'missing' ? !r.inSheet || r.notInCatalog : true)));
+    const tabs = [['short', `Yetmeyen ürünler (${shortRows.length})`], ['stock', `Tüm stok (${full.length})`], ['all', `Siparişteki ürünler (${R.rows.length})`], ['blocked', `Çıkmayacak siparişler (${n(R.blocked.length)})`], ['missing', `Tabloda bulunamayan (${notIn.length})`]];
     mount($('#body'), html`<div class="stack">
       <div class="kpis">
         <div class="kpi"><div class="l">${icon('receipt')}Sipariş</div><div class="v">${n(R.total)}</div><div class="s">${rangeLabel(from, to)}</div></div>
@@ -240,6 +243,19 @@ export default async function stockPage(ctx) {
             <td class="num hide-m">${n(r.orders)}</td></tr>`)
           : html`<tr><td colspan="7">${emptyState('check', view === 'short' ? 'Stok bütün siparişlere yetiyor' : 'Bu seçimde sipariş yok', '')}</td></tr>`}
           </tbody></table></div>` : ''}
+        ${view === 'stock' ? html`<div class="card-f row wrap" style="gap:10px;border-top:0">
+            <div class="search" style="width:260px;max-width:100%">${icon('search')}<input class="input sm" id="sq" placeholder="Ürün veya SKU ara…" value="${stockQ}"></div>
+            <select class="input sm" id="sf" style="width:auto">${[['all', 'Hepsi'], ['ordered', 'Yalnızca siparişi olanlar'], ['zero', 'Stoğu 0 olanlar'], ['missing', 'Eşleşmeyenler (tabloda / sitede yok)']].map(([k, l]) => html`<option value="${k}" ${stockFilter === k ? 'selected' : ''}>${l}</option>`)}</select>
+            <span class="muted xs">Ürünler sayfasındaki sırayla, siparişi olsun olmasın bütün ürünler.</span></div>
+          <div class="tw"><table class="t"><thead><tr><th class="num">#</th><th>Ürün</th><th class="hide-m">SKU</th><th class="num">Stok (KALAN)</th><th class="num">Gereken</th><th class="num">Sipariş sonrası</th><th>Durum</th></tr></thead><tbody>
+          ${fullView.length ? fullView.map((r) => html`<tr class="${r.active ? '' : 'muted'}">
+            <td class="num muted">${r.pos || ''}</td><td><b>${r.name}</b>${r.active ? '' : html` <span class="muted xs">(pasif)</span>`}</td><td class="hide-m muted small">${r.sku || '—'}</td>
+            <td class="num big">${r.inSheet ? n(r.stock) : html`<span class="muted">—</span>`}</td>
+            <td class="num">${r.need ? n(r.need) : html`<span class="muted">·</span>`}</td>
+            <td class="num">${r.after == null ? html`<span class="muted">—</span>` : r.after < 0 ? html`<b style="color:var(--danger)">${n(r.after)}</b>` : n(r.after)}</td>
+            <td>${r.notInCatalog ? html`<span class="badge info">Sitede yok</span>` : !r.inSheet ? html`<span class="badge warn">Tabloda yok</span>` : r.short ? html`<span class="badge" style="background:var(--danger-50);color:var(--danger)">${n(r.short)} eksik</span>` : r.stock <= 0 ? html`<span class="badge warn">Stok yok</span>` : r.need ? html`<span class="badge ok">Yeterli</span>` : ''}</td></tr>`)
+          : html`<tr><td colspan="7">${emptyState('search', 'Sonuç yok', '')}</td></tr>`}
+          </tbody></table></div>` : ''}
         ${view === 'blocked' ? html`<div class="tw"><table class="t"><thead><tr><th class="num">#</th><th>Yükleme</th><th>Mağaza</th><th>Sipariş no</th><th>İçerik</th><th>Yetmeyen</th></tr></thead><tbody>
           ${R.blocked.length ? R.blocked.slice(0, 500).map((b, i) => html`<tr>
             <td class="num muted">${i + 1}</td><td class="nowrap small">${trDateTime(b.c.order.at)}</td><td>${storeTag(b.c.store, b.c.order.sender)}</td>
@@ -254,7 +270,13 @@ export default async function stockPage(ctx) {
       <div class="muted xs">Hesap: siparişler yükleme sırasıyla sıralanır; her sipariş ürünlerinin hepsi stokta kalmışsa “çıkabilir” sayılır ve o adetler ayrılır, bir ürünü bile yetmiyorsa “çıkmaz” sayılır ve hiçbir şey ayırmaz (kısmi gönderim yok). Bu ayrım yalnızca ekranda yapılır.</div>
     </div>`);
     $('#body').querySelectorAll('[data-v]').forEach((b) => b.addEventListener('click', () => { view = b.dataset.v; render(); }));
+    const sq = $('#sq');
+    if (sq) {
+      sq.addEventListener('input', (e) => { stockQ = e.target.value; clearTimeout(sqT); sqT = setTimeout(() => { render(); const i = $('#sq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 250); });
+      $('#sf').addEventListener('change', (e) => { stockFilter = e.target.value; render(); });
+    }
   }
+  let stockQ = '', stockFilter = 'all', sqT = 0;
 
   async function exportXls() {
     if (!R) return;
@@ -262,6 +284,8 @@ export default async function stockPage(ctx) {
     busy(btn, true, 'Hazırlanıyor…');
     try {
       await exportSheets(`stok-kontrol-${from}${to !== from ? '_' + to : ''}.xlsx`, [
+        { title: 'Tüm stok', columns: [{ label: '#', num: true, width: 6 }, { label: 'Ürün', width: 46 }, { label: 'SKU', width: 18 }, { label: 'Stok (KALAN)', num: true, width: 13 }, { label: 'Gereken', num: true, width: 11 }, { label: 'Sipariş sonrası', num: true, width: 14 }, { label: 'Durum', width: 16 }],
+          rows: fullStockList(state.ctx.products, stock, sheet.items, R.rows, R.notInSheet).map((r) => [r.pos || '', r.name, r.sku, r.inSheet ? r.stock : '', r.need, r.after == null ? '' : r.after, r.notInCatalog ? 'Sitede yok' : !r.inSheet ? 'Tabloda yok' : r.short ? `${r.short} eksik` : r.stock <= 0 ? 'Stok yok' : r.need ? 'Yeterli' : '']) },
         { title: 'Ürünler', columns: [{ label: 'Ürün', width: 46 }, { label: 'SKU', width: 18 }, { label: 'Gereken', num: true, width: 11 }, { label: 'Stok (KALAN)', num: true, width: 13 }, { label: 'Sipariş sonrası', num: true, width: 14 }, { label: 'Eksik', num: true, width: 10 }, { label: 'Sipariş', num: true, width: 10 }],
           rows: R.rows.map((r) => [pname(r.productId), r.sku, r.need, r.stock, r.after, r.short, r.orders]) },
         { title: 'Çıkmayacak siparişler', columns: [{ label: 'Yükleme', width: 17 }, { label: 'Mağaza', width: 22 }, { label: 'Sipariş no', width: 20 }, { label: 'İçerik', width: 60 }, { label: 'Yetmeyen', width: 60 }],

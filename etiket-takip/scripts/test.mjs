@@ -604,6 +604,10 @@ await test('Stok kontrol: KALAN sayfası okunur, ilk yüklenen önce pay alır, 
   assert.equal(R.notInSheet.get('c'), 4);
   // Kampanya hediyesi sayılmazsa 2. sipariş de çıkar
   assert.equal(checkStock([ord('1', [['a', 3]]), ord('2', [['a', 2]], [{ productId: 'a', qty: 1 }])], stock, { includeRewards: false }).blocked.length, 0);
+  // Bütün stok: katalog sırası (siparişsizler dahil) + sitede olmayan tablo satırları
+  const { fullStockList } = await import('../public/assets/js/shared/stock.js');
+  const all = fullStockList([{ id: 'c', name: 'Ürün C', sku: 'C-1' }, { id: 'b', name: 'ürün b', sku: '' }, { id: 'a', name: 'Ürün A', sku: 'a-1' }], stock, [...items, { sku: 'Z-9', name: 'Ürün Z', qty: 7 }], R.rows, R.notInSheet);
+  assert.deepEqual(all.map((r) => [r.name, r.stock, r.need, r.inSheet, !!r.notInCatalog]), [['Ürün C', null, 4, false, false], ['ürün b', 1234, 0, true, false], ['Ürün A', 5, 8, true, false], ['Ürün Z', 7, 0, true, true]]);
 });
 
 console.log(`\n${passed} test geçti`);

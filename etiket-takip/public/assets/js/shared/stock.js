@@ -119,3 +119,28 @@ export function stockSnapshot(R, ctx, { maxBlocked = 1000 } = {}) {
 export function uploadOrder(orders, atOf = (o) => o.at) {
   return orders.map((o, i) => ({ o, i, t: String(atOf(o) || o.date || '') })).sort((a, b) => a.t.localeCompare(b.t) || a.i - b.i).map((x) => x.o);
 }
+
+/**
+ * Bütün stok listesi: katalogdaki tüm ürünler Ürünler sayfasındaki sırayla (siparişi olsun olmasın),
+ * ardından tabloda olup sitede karşılığı olmayan satırlar. rows: checkStock().rows
+ */
+export function fullStockList(products, stock, items, rows, notInSheet = new Map()) {
+  const byId = new Map(rows.map((r) => [r.productId, r]));
+  const out = products.map((p, i) => {
+    const s = stock.get(p.id);
+    const r = byId.get(p.id);
+    const need = r ? r.need : notInSheet.get(p.id) || 0;
+    return { pos: i + 1, productId: p.id, name: p.name, sku: s ? s.sku : p.sku || '', inSheet: !!s, stock: s ? s.qty : null, need, after: s ? s.qty - need : null, short: r ? r.short : 0, orders: r ? r.orders : 0, active: p.active !== false };
+  });
+  const usedSku = new Set(), usedName = new Set();
+  for (const s of stock.values()) { if (s.sku) usedSku.add(fold(s.sku)); if (s.name) usedName.add(fold(s.name)); }
+  const seen = new Set();
+  for (const it of items) {
+    const k = fold(it.sku) || fold(it.name);
+    if (!k || seen.has(k) || (it.sku && usedSku.has(fold(it.sku))) || (!it.sku && usedName.has(fold(it.name)))) continue;
+    seen.add(k);
+    const qty = items.filter((x) => (fold(x.sku) || fold(x.name)) === k).reduce((a, x) => a + (x.qty || 0), 0);
+    out.push({ pos: null, productId: null, name: it.name || it.sku, sku: it.sku, inSheet: true, notInCatalog: true, stock: qty, need: 0, after: qty, short: 0, orders: 0, active: true });
+  }
+  return out;
+}
