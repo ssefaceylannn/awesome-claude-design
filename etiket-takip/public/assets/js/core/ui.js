@@ -12,7 +12,17 @@ export function html(strings, ...vals) {
 }
 export const $ = (s, el = document) => el.querySelector(s);
 export const $$ = (s, el = document) => Array.from(el.querySelectorAll(s));
-export const mount = (el, content) => { el.innerHTML = rv(content); return el; };
+/**
+ * İçeriği yerleştir. "Yükleniyor…" yer tutucusu konurken alanın o anki yüksekliği korunur; yoksa sayfa bir an
+ * kısalır ve tarayıcı sayfayı yukarı kaydırır (ör. filtrede seçim yapınca). Gerçek içerik gelince serbest kalır.
+ */
+export const mount = (el, content) => {
+  const s = rv(content);
+  if (el.isConnected && s.startsWith('<div class="loading"') && el.offsetHeight > 80) { el.style.minHeight = el.offsetHeight + 'px'; el.dataset.held = '1'; }
+  else if (el.dataset.held) { el.style.minHeight = ''; delete el.dataset.held; }
+  el.innerHTML = s;
+  return el;
+};
 
 // ------------------------------------------------------------------ biçimlendirme
 const nf = new Intl.NumberFormat('tr-TR');
@@ -37,7 +47,8 @@ export const uid = (p = '') => p + Date.now().toString(36) + Math.random().toStr
 export const collator = new Intl.Collator('tr-TR', { numeric: true });
 /** Kişi adlarını büyük harfle başlatır (yalnızca görünüm; giriş adı değişmez): "sami ceylan" → "Sami Ceylan" */
 export const personName = (s) => String(s ?? '').replace(/(^|[\s._-])(\p{Ll})/gu, (_, sep, ch) => sep + ch.toLocaleUpperCase('tr-TR'));
-export const initials = (s) => { const w = String(s ?? '').split(/[\s._-]+/).filter(Boolean); return (w.length > 1 ? w[0][0] + w[1][0] : (w[0] || '?').slice(0, 2)).toLocaleUpperCase('tr-TR'); };
+/** Profil kutusu: ad + soyadın baş harfi ("sefa.ceylan" → SC); tek kelimeyse yalnızca baş harf ("sami" → S) */
+export const initials = (s) => { const w = String(s ?? '').split(/[\s._-]+/).filter(Boolean); return (w.length > 1 ? w[0][0] + w[w.length - 1][0] : (w[0] || '?')[0]).toLocaleUpperCase('tr-TR'); };
 
 export const PLATFORMS = [
   { id: 'trendyol', label: 'Trendyol' },
@@ -179,6 +190,8 @@ export function multiSelect(el, opts) {
   };
   el.classList.add('ms');
   const render = () => mount(el, html`<button type="button" class="btn">${raw('<span>' + esc(summary()) + '</span>')}${icon('chevD')}</button>`);
+  // Açık listedeyken yalnızca düğme yazısı güncellenir: liste yeniden çizilmez, kaydırma yeri ve odak korunur
+  const relabel = () => { const sp = el.querySelector(':scope > .btn > span'); if (sp) sp.textContent = summary(); else render(); };
   render();
   let pop = null;
   const close = () => { if (pop) { pop.remove(); pop = null; document.removeEventListener('mousedown', outside, true); } };
@@ -207,7 +220,7 @@ export function multiSelect(el, opts) {
       const id = ev.target.dataset.id;
       if (!id) return;
       if (ev.target.checked) selected.add(id); else selected.delete(id);
-      render(); el.appendChild(pop);
+      relabel();
       opts.onChange && opts.onChange([...selected]);
     });
     pop.addEventListener('click', (ev) => {

@@ -25,7 +25,6 @@ const NAV = [
     { id: 'campaigns', label: 'Kampanyalar', icon: 'tag' },
   ] },
   { group: 'Sistem', items: [
-    { id: 'users', label: 'Kullanıcılar', icon: 'users', role: 'admin' },
     { id: 'settings', label: 'Ayarlar & Kayıtlar', icon: 'settings' },
   ] },
 ];
@@ -40,14 +39,27 @@ function sidebar() {
   const u = state.me;
   mount($('#sidebar'), html`
     <div class="brandmark"><div class="logo">${icon('scan')}</div>
-      <div><b>${state.config.settings.companyName || 'Etiket Takip'}</b><small>Sipariş & Üretim Planlama</small></div></div>
+      <div><b>Etiket Takip</b><small>Sipariş & Üretim Planlama</small></div></div>
     <nav class="nav">${NAV.map((g) => {
       const items = g.items.filter((i) => !i.role || can(i.role));
-      return items.length ? html`<div class="nav-group"><span>${g.group}</span>${items.map((i) => html`<a href="#/${i.id}" data-id="${i.id}">${icon(i.icon)}<span>${i.label}</span><span class="count hidden" data-count="${i.id}"></span></a>`)}</div>` : '';
+      return items.length ? html`<div class="nav-group"><span>${g.group}</span>${items.map((i) => html`<a href="#/${i.id}" data-id="${i.id}" title="${i.label}">${icon(i.icon)}<span>${i.label}</span><span class="count hidden" data-count="${i.id}"></span></a>`)}</div>` : '';
     })}</nav>
+    <button class="nav-toggle" id="navToggle" type="button">${icon('chevL')}<span>Menüyü daralt</span></button>
     <div class="me"><div class="avatar">${initials(u.username)}</div><div><b>${personName(u.username)}</b><small>${ROLE_LABEL[u.role] || u.role}</small></div>
       <button id="themeBtn" title="Tema">${icon('moon')}</button>
       <button id="logoutBtn" title="Çıkış yap">${icon('logout')}</button></div>`);
+  // Kenar menü daraltma (geniş ekranda; tercih bu tarayıcıda hatırlanır)
+  const mini = (on) => {
+    $('#app').classList.toggle('nav-mini', on);
+    const t = $('#navToggle');
+    t.title = on ? 'Menüyü genişlet' : 'Menüyü daralt';
+    t.querySelector('span').textContent = on ? 'Menüyü genişlet' : 'Menüyü daralt';
+    try { localStorage.setItem('et-nav-mini', on ? '1' : '0'); } catch { /* yok */ }
+  };
+  let miniOn = false;
+  try { miniOn = localStorage.getItem('et-nav-mini') === '1'; } catch { /* yok */ }
+  mini(miniOn);
+  $('#navToggle').addEventListener('click', () => { miniOn = !miniOn; mini(miniOn); });
   $('#logoutBtn').addEventListener('click', async () => {
     await fetch('/api/logout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     location.href = '/login.html';
@@ -89,8 +101,7 @@ async function route() {
   current = id;
   const top = $('#topbar');
   mount(top, html`<button class="btn ghost icon menu-btn" id="menuBtn" aria-label="Menü">${icon('menu')}</button>
-    <div class="title"><h1>${item.label}</h1><small id="pageSub"></small></div><div id="gsearch"></div><div class="actions" id="pageActions"></div>
-    <div class="corp-logo" title="Apidemia Pharma A.Ş."><img src="/assets/img/firma-logo.png" alt="Apidemia Pharma A.Ş." width="132" height="34"></div>`);
+    <div class="title"><h1>${item.label}</h1><small id="pageSub"></small></div><div id="gsearch"></div><div class="actions" id="pageActions"></div>`);
   $('#menuBtn').addEventListener('click', () => $('#app').classList.add('nav-open'));
   mountProductSearch($('#gsearch'), (p) => navigate('product', { id: p.id }));
   // Her sayfa için yeni bir kap: önceki sayfanın olay dinleyicileri taşınmasın

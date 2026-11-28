@@ -171,7 +171,7 @@ export default async function productionPage(ctx) {
       try {
         if (x === 'full') {
           busy(btn, true, 'Hazırlanıyor…');
-          await exportProduction({ R, ctx: state.ctx, from, to, filterLabel: filterLabel(filter), includeZero, user: state.me.username, company: state.config.settings.companyName });
+          await exportProduction({ R, ctx: state.ctx, from, to, filterLabel: filterLabel(filter), includeZero, user: state.me.username });
           toast('Excel indirildi', 'ok');
         } else if (x === 'fixed') {
           busy(btn, true, 'Hazırlanıyor…');
@@ -191,7 +191,7 @@ export default async function productionPage(ctx) {
   ctx.actions.querySelector('#printBtn').addEventListener('click', () => {
     if (!R) return;
     const rows = productionRows(R, state.ctx, { includeZero });
-    document.getElementById('print').innerHTML = `<h1>${esc(state.config.settings.companyName ? state.config.settings.companyName + ' — ' : '')}Üretim / Sevk Listesi</h1>
+    document.getElementById('print').innerHTML = `<h1>Üretim / Sevk Listesi</h1>
       <p>${esc(rangeLabel(from, to))} · ${esc(filterLabel(filter))} · ${n(R.orders)} sipariş · ${n(R.campaignOrders)} kampanyalı sipariş</p>
       <table><thead><tr><th>#</th><th>Ürün</th><th class="num">Etiket</th><th class="num">Kampanya</th><th class="num">Gönderilecek</th><th class="box">✓</th></tr></thead><tbody>
       ${rows.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(state.ctx.labelOf(r.product))}</td><td class="num">${n(r.labelUnits)}</td><td class="num">${r.campaignUnits ? '+' + n(r.campaignUnits) : ''}</td><td class="num"><b>${n(r.total)}</b></td><td class="box"></td></tr>`).join('')}

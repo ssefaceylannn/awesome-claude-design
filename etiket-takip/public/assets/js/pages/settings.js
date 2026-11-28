@@ -1,15 +1,44 @@
 // Ayarlar, yedekleme ve işlem geçmişi.
 import { html, mount, personName, icon, toast, busy, download, trDateTime, today, confirmDialog, emptyState, MONTHS, n, modal } from '../core/ui.js';
-import { api, state, isAdmin, saveSection, invalidateOrders, reloadConfig, fetchOrders } from '../core/api.js';
+import { api, state, saveSection, invalidateOrders, reloadConfig, fetchOrders } from '../core/api.js';
 import { isLegacyBackup, convertLegacy } from '../core/legacy.js';
 import { refreshBadges } from '../app.js';
 import { DEFAULT_NOISE } from '../shared/matcher.js';
 
+/** Şifremi değiştir: her kullanıcı kendi şifresini değiştirebilir */
+function passwordCard() {
+  return html`<div class="card"><div class="card-h"><h2>Şifremi değiştir</h2><span class="sub">${personName(state.me.username)} kullanıcısı</span></div><div class="card-b">
+    <form class="form" id="pwForm" autocomplete="off">
+      <label class="f">Mevcut şifre<input class="input" type="password" name="current" autocomplete="current-password" required></label>
+      <label class="f">Yeni şifre <span class="hint">en az 8 karakter</span><input class="input" type="password" name="next" autocomplete="new-password" minlength="8" required></label>
+      <label class="f">Yeni şifre (tekrar)<input class="input" type="password" name="again" autocomplete="new-password" minlength="8" required></label>
+      <div class="f"><span>&nbsp;</span><button class="btn primary" type="submit">Şifreyi değiştir</button></div>
+      <p class="muted small full">Bu cihazda oturumunuz açık kalır; diğer cihazlarda yeniden giriş yapmanız gerekir.</p>
+    </form></div></div>`;
+}
+function wirePassword(root) {
+  const f = root.querySelector('#pwForm');
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (f.next.value.length < 8) return toast('Yeni şifre en az 8 karakter olmalı', 'err');
+    if (f.next.value !== f.again.value) return toast('Yeni şifreler birbiriyle aynı değil', 'err');
+    const btn = f.querySelector('button[type=submit]');
+    busy(btn, true, 'Kaydediliyor…');
+    try {
+      await api.post('password', { current: f.current.value, next: f.next.value });
+      f.reset();
+      toast('Şifreniz değiştirildi', 'ok');
+    } catch (err) { toast(err.message, 'err'); }
+    busy(btn, false);
+  });
+}
+
 export default async function settingsPage(ctx) {
-  const admin = isAdmin();
   const s = state.config.settings;
-  if (!admin) {
-    mount(ctx.el, html`<div class="stack"><div class="callout info">${icon('shield')}<div class="c"><b>Ayarları yalnızca yöneticiler değiştirebilir</b>Kayıtlar ${s.retentionDays} gün saklanır. Tema için sol alttaki ay/güneş simgesini kullanabilirsiniz.</div></div></div>`);
+  // Site ayarları, yedekleme ve işlem geçmişi yalnızca site sahibine açıktır; herkes kendi şifresini değiştirebilir
+  if (!state.me.owner) {
+    mount(ctx.el, html`<div class="stack">${passwordCard()}<div class="callout info">${icon('shield')}<div class="c"><b>Site ayarlarını yalnızca site sahibi değiştirebilir</b>Kayıtlar ${s.retentionDays} gün saklanır. Tema için sol alttaki ay/güneş simgesini kullanabilirsiniz.</div></div></div>`);
+    wirePassword(ctx.el);
     return;
   }
   const t = new Date();
@@ -19,7 +48,6 @@ export default async function settingsPage(ctx) {
     <div class="grid g-2">
       <div class="card"><div class="card-h"><h2>Genel</h2></div><div class="card-b">
         <form class="form" id="gen">
-          <label class="f full">Şirket / panel adı <span class="hint">Kenar menüde ve Excel başlığında görünür</span><input class="input" name="companyName" value="${s.companyName}" maxlength="80" placeholder="Ultra Natura"></label>
           <label class="f">Kayıt saklama süresi (gün)<input class="input" type="number" name="retentionDays" min="30" max="3650" value="${s.retentionDays}"></label>
           <div class="f"><span>&nbsp;</span><button class="btn primary" type="submit">Kaydet</button></div>
           <p class="muted small full">Süresi dolan günlük kayıtlar her gün ilk yüklemede otomatik silinir. Varsayılan: 365 gün.</p>
@@ -33,6 +61,7 @@ export default async function settingsPage(ctx) {
         </form>
       </div></div>
     </div>
+    ${passwordCard()}
     <div class="card"><div class="card-h"><h2>Yedekleme</h2><span class="sub">Tüm veriler Netlify Blobs'ta saklanır; ek güvence için düzenli yedek alın</span></div><div class="card-b stack">
       <div class="row wrap">
         <button class="btn primary" id="backup">${icon('download')}Tam yedek indir (JSON)</button>
@@ -47,12 +76,13 @@ export default async function settingsPage(ctx) {
       <div id="audit"><div class="loading"><div class="spin"></div></div></div></div>
   </div>`);
   const $ = (q) => ctx.el.querySelector(q);
+  wirePassword(ctx.el);
 
   $('#gen').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = e.target;
     try {
-      await saveSection('settings', { ...state.config.settings, companyName: f.companyName.value.trim(), retentionDays: Math.max(30, Math.min(3650, parseInt(f.retentionDays.value, 10) || 365)) }, 'genel ayarlar');
+      await saveSection('settings', { ...state.config.settings, retentionDays: Math.max(30, Math.min(3650, parseInt(f.retentionDays.value, 10) || 365)) }, 'genel ayarlar');
       toast('Ayarlar kaydedildi', 'ok');
     } catch (err) { toast(err.message, 'err'); }
   });

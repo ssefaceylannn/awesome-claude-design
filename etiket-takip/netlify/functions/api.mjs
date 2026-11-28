@@ -23,7 +23,7 @@ const DEFAULT_CONFIG = () => ({
   campaigns: [],
   campaignTemplates: [],
   aliases: {},
-  settings: { retentionDays: 365, noiseWords: DEFAULT_NOISE, companyName: '' },
+  settings: { retentionDays: 365, noiseWords: DEFAULT_NOISE },
   karma: DEFAULT_KARMA(),
   updatedAt: null,
   updatedBy: null,
@@ -180,7 +180,6 @@ const SANITIZE = {
   settings: (s) => ({
     retentionDays: int(s && s.retentionDays, 30, 3650, 365),
     noiseWords: (Array.isArray(s && s.noiseWords) ? s.noiseWords : DEFAULT_NOISE).map((w) => str(w, 40)).filter(Boolean).slice(0, 500),
-    companyName: str(s && s.companyName, 80),
     // Marka → yalnızca satıldığı mağazalar (boş/yok = tüm mağazalar). null = henüz ayarlanmadı.
     brandStores: s && s.brandStores && typeof s.brandStores === 'object'
       ? Object.fromEntries(Object.entries(s.brandStores).slice(0, 200).map(([b, ids]) => [str(b, 60), (Array.isArray(ids) ? ids : []).filter(id).slice(0, 200)]).filter(([b]) => b))
@@ -231,6 +230,52 @@ async function sha(text) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// ------------------------------------------------------------------ şifre
+// Kullanıcılar Netlify'daki USERS değişkeninden gelir. Kullanıcı kendi şifresini değiştirirse yeni şifre
+// pwd/<kullanıcı> kaydında PBKDF2 ile şifrelenmiş saklanır ve girişte bu kullanılır. Netlify'da o kullanıcının
+// şifresi sonradan değiştirilirse (ör. unutulan şifre) kayıt geçersiz olur ve Netlify'daki şifre geçerli olur.
+const PBKDF2_ITER = 120000;
+const hexOf = (buf) => [...new Uint8Array(buf)].map((x) => x.toString(16).padStart(2, '0')).join('');
+async function pbkdf2(password, saltHex) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const salt = Uint8Array.from(saltHex.match(/../g).map((h) => parseInt(h, 16)));
+  return hexOf(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: PBKDF2_ITER }, key, 256));
+}
+const pwdKey = (username) => 'pwd/' + (fold(username).replace(/\s+/g, '-') || '_');
+/** Kullanıcının geçerli şifresi: doğrulama + oturuma yazılan parmak izi */
+async function credOf(u, secret) {
+  const envTag = await passwordTag(u.password, secret);
+  const ov = await getJSON(pwdKey(u.username));
+  if (ov && ov.hash && ov.salt && ov.envTag === envTag) {
+    return { custom: true, envTag, tag: await passwordTag('ov:' + ov.hash, secret), verify: async (pw) => safeEqual(await pbkdf2(pw, ov.salt), ov.hash) };
+  }
+  return { custom: false, envTag, tag: envTag, verify: async (pw) => safeEqual(u.password, pw) };
+}
+
+async function changePassword(req, user) {
+  const b = await body(req);
+  const current = String(b.current ?? ''), next = String(b.next ?? '');
+  const u = parseUsers(env('USERS')).find((x) => x.username === user.u);
+  if (!u) throw new HttpError(404, 'Kullanıcı bulunamadı');
+  if (next.length < 8 || next.length > 100) throw new HttpError(400, 'Yeni şifre en az 8 karakter olmalı');
+  if (next === current) throw new HttpError(400, 'Yeni şifre eskisiyle aynı olamaz');
+  const secret = await getSecret(env);
+  const cred = await credOf(u, secret);
+  if (!(await cred.verify(current))) {
+    await new Promise((r) => setTimeout(r, 400));
+    throw new HttpError(400, 'Mevcut şifre hatalı');
+  }
+  const salt = hexOf(crypto.getRandomValues(new Uint8Array(16)));
+  const hash = await pbkdf2(next, salt);
+  await setJSON(pwdKey(u.username), { salt, hash, envTag: cred.envTag, at: nowIso() });
+  await audit(user, 'şifre değişikliği', '');
+  // Bu tarayıcıdaki oturum açık kalır (aynı süreyle); diğer cihazlardaki oturumlar kapanır
+  const old = await verifyToken(readCookie(req.headers.get('cookie'), COOKIE), secret);
+  const exp = old && old.exp ? old.exp : Date.now() + 12 * 3600e3;
+  const token = await signToken({ u: u.username, r: u.role, pw: await passwordTag('ov:' + hash, secret), exp }, secret);
+  return json({ ok: true }, 200, { 'set-cookie': cookie(token, Math.max(60, Math.round((exp - Date.now()) / 1000))) });
+}
+
 async function session(req) {
   const secret = await getSecret(env);
   const tok = readCookie(req.headers.get('cookie'), COOKIE);
@@ -238,7 +283,7 @@ async function session(req) {
   if (!s) return null;
   // Kullanıcı USERS listesinden silindiyse, rolü veya şifresi değiştiyse oturumu geçersiz say
   const u = parseUsers(env('USERS')).find((x) => x.username === s.u);
-  if (!u || !safeEqual(s.pw || '', await passwordTag(u.password, secret))) return null;
+  if (!u || !safeEqual(s.pw || '', (await credOf(u, secret)).tag)) return null;
   return { u: u.username, r: u.role };
 }
 
@@ -246,6 +291,11 @@ const need = (user, ...roles) => {
   if (!user) throw new HttpError(401, 'Oturum açmanız gerekiyor');
   if (roles.length && !roles.includes(user.r)) throw new HttpError(403, 'Bu işlem için yetkiniz yok');
 };
+// Site sahibi (Ayarlar sayfasındaki site ayarları, yedek, geri yükleme, işlem geçmişi). Varsayılan: "sefa";
+// Netlify ortam değişkeni SITE_OWNER ile değiştirilebilir.
+const ownerName = () => String(env('SITE_OWNER') || 'sefa').trim().toLocaleLowerCase('tr-TR');
+const isOwner = (user) => !!user && user.u === ownerName();
+const needOwner = (user) => { if (!isOwner(user)) throw new HttpError(403, 'Bu işlemi yalnızca site sahibi yapabilir'); };
 
 async function body(req) {
   const ct = req.headers.get('content-type') || '';
@@ -279,7 +329,9 @@ async function login(req) {
     throw new HttpError(429, `Çok fazla hatalı deneme. ${min} dakika sonra tekrar deneyin.`);
   }
   const u = users.find((x) => x.username === username);
-  const ok = u ? safeEqual(u.password, password) : (safeEqual('x'.repeat(password.length), password + '!'), false);
+  const secret = await getSecret(env);
+  const cred = u ? await credOf(u, secret) : null;
+  const ok = cred ? await cred.verify(password) : (safeEqual('x'.repeat(password.length), password + '!'), false);
   if (!ok) {
     // Sayaçlar atomik artırılır: eşzamanlı çok sayıda deneme sayacı ezip kilidi atlatamaz
     await update(lockKey, (cur) => {
@@ -295,8 +347,7 @@ async function login(req) {
   }
   if (lock.fails) await del(lockKey);
   const maxAge = b.remember ? 30 * 86400 : 12 * 3600;
-  const secret = await getSecret(env);
-  const token = await signToken({ u: u.username, r: u.role, pw: await passwordTag(u.password, secret), exp: Date.now() + maxAge * 1000 }, secret);
+  const token = await signToken({ u: u.username, r: u.role, pw: cred.tag, exp: Date.now() + maxAge * 1000 }, secret);
   await audit({ u: u.username }, 'giriş', b.remember ? 'Beni hatırla' : '');
   return json({ user: { username: u.username, role: u.role } }, 200, { 'set-cookie': cookie(token, maxAge) });
 }
@@ -748,11 +799,13 @@ export default async (req) => {
 
     const user = await session(req);
     need(user);
+    // Kendi şifresini değiştir (her rol). Netlify'daki USERS değişmez; yeni şifre sitede şifrelenmiş olarak saklanır.
+    if (path === 'password' && m === 'POST') return await changePassword(req, user);
     if (m !== 'GET') need(user, 'admin', 'personel');
 
     if (path === 'me' && m === 'GET') {
       const secretSet = !!(env('AUTH_SECRET') && env('AUTH_SECRET').length >= 16);
-      return json({ user: { username: user.u, role: user.r }, warnings: secretSet ? [] : ['AUTH_SECRET tanımlı değil'] });
+      return json({ user: { username: user.u, role: user.r, owner: isOwner(user) }, warnings: secretSet ? [] : ['AUTH_SECRET tanımlı değil'] });
     }
 
     if (path === 'config' && m === 'GET') return json({ config: await getConfig() });
@@ -761,8 +814,16 @@ export default async (req) => {
       const section = path.slice(7);
       if (!SANITIZE[section]) throw new HttpError(404, 'Bilinmeyen ayar bölümü');
       const b = await body(req);
-      const value = SANITIZE[section](b.value);
-      const cfg = await update('config', (c) => ({ ...c, [section]: value, updatedAt: nowIso(), updatedBy: user.u }), DEFAULT_CONFIG);
+      let value = SANITIZE[section](b.value);
+      const cfg = await update('config', (c) => {
+        // Site ayarları (kayıt saklama süresi, yok sayılan kelimeler) yalnızca site sahibince değişir; diğer
+        // yöneticilerin kaydettiği ayarlarda (stok tablosu, marka kuralları) bu alanlar olduğu gibi kalır
+        if (section === 'settings' && !isOwner(user)) {
+          const cur = { ...DEFAULT_CONFIG().settings, ...((c && c.settings) || {}) };
+          value = { ...value, retentionDays: cur.retentionDays, noiseWords: cur.noiseWords };
+        }
+        return { ...c, [section]: value, updatedAt: nowIso(), updatedBy: user.u };
+      }, DEFAULT_CONFIG);
       await audit(user, 'ayar değişikliği', `${section}${b.summary ? ': ' + str(b.summary, 300) : ''}`);
       return json({ config: { ...DEFAULT_CONFIG(), ...cfg } });
     }
@@ -928,25 +989,20 @@ export default async (req) => {
     }
 
     if (path === 'audit' && m === 'GET') {
-      need(user, 'admin');
+      needOwner(user);
       const month = url.searchParams.get('month') || todayTR().slice(0, 7);
       if (!/^\d{4}-\d{2}$/.test(month)) throw new HttpError(400, 'Geçersiz ay');
       return json({ events: (await getJSON(`audit/${month}`, [])).slice().reverse() });
     }
 
-    if (path === 'users' && m === 'GET') {
-      need(user, 'admin');
-      return json({ users: parseUsers(env('USERS')).map(({ username, role }) => ({ username, role })) });
-    }
-
     if (path === 'cleanup' && m === 'POST') {
-      need(user, 'admin');
+      needOwner(user);
       return json({ result: await maybeCleanup(user, true) });
     }
 
     // Eski sistemin (Kampanya Hesaplama) sipariş numaraları: yalnızca mükerrer kontrolü için
     if (path === 'legacy/index' && m === 'POST') {
-      need(user, 'admin');
+      needOwner(user);
       const b = await body(req);
       const entries = (Array.isArray(b.entries) ? b.entries : []).filter((e) => Array.isArray(e) && /^\d{10,30}$/.test(String(e[0])) && isYmd(e[1])).slice(0, 30000);
       const byBucket = new Map();
@@ -965,7 +1021,7 @@ export default async (req) => {
 
     // Aktarılan arşiv özetlerini kaldır
     if (path === 'legacy/remove' && m === 'POST') {
-      need(user, 'admin');
+      needOwner(user);
       const keys = await listKeys('day/');
       let removed = 0;
       await pmap(keys, 8, (k) =>
@@ -984,7 +1040,7 @@ export default async (req) => {
 
     // Yedek: ay ay indirilir (Netlify yanıt boyutu sınırı nedeniyle)
     if (path === 'backup' && m === 'GET') {
-      need(user, 'admin');
+      needOwner(user);
       const month = url.searchParams.get('month');
       if (!month) {
         const days = (await listKeys('day/')).map((k) => k.slice(4)).sort();
@@ -997,7 +1053,7 @@ export default async (req) => {
     }
 
     if (path === 'restore' && m === 'POST') {
-      need(user, 'admin');
+      needOwner(user);
       const b = await body(req);
       if (b.config) {
         const c = b.config;

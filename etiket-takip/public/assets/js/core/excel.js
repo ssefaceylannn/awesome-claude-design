@@ -89,7 +89,7 @@ function totalRow(ws, row, vals, numCols = []) {
  * Üretim / sevk listesi. İlk sayfa tam olarak istenen biçimde:
  * katalog sırasına göre "Ürün | Gönderilecek Adet".
  */
-export async function exportProduction({ R, ctx, from, to, filterLabel, includeZero, user, company }) {
+export async function exportProduction({ R, ctx, from, to, filterLabel, includeZero, user }) {
   const ExcelJS = await lib();
   const wb = new ExcelJS.Workbook();
   wb.creator = user || 'Etiket Takip';
@@ -100,7 +100,7 @@ export async function exportProduction({ R, ctx, from, to, filterLabel, includeZ
   // 1) Üretim listesi (ürün + son gönderilecek adet)
   const ws = wb.addWorksheet('Üretim Listesi', { views: [{ state: 'frozen', ySplit: 3 }], pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
   ws.columns = [{ width: 48 }, { width: 22 }];
-  title(ws, `${company ? company + ' — ' : ''}Üretim / Sevk Listesi`, sub, 2);
+  title(ws, 'Üretim / Sevk Listesi', sub, 2);
   header(ws, 3, ['Ürün', 'Gönderilecek Adet']);
   body(ws, 4, rows.map((r) => [ctx.labelOf(r.product), r.total]), [1]);
   totalRow(ws, 4 + rows.length, ['TOPLAM', rows.reduce((s, r) => s + r.total, 0)], [1]);
