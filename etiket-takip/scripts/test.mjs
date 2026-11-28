@@ -112,6 +112,13 @@ await test('Karma ayıklama: kategori + ürün seçimi; yalnızca seçilenler �
   assert.equal(kindOfIds(['cm'], ctx, onlyCm), 'only');
   assert.equal(kindOfIds(['cm', 'dm'], ctx, onlyCm), 'mixed');
   assert.equal(kindOfIds(['cm', 'zs'], ctx, karmaRule({ cats: ['İçecek & Mix'], productIds: ['zs'] })), 'only');
+  // "Karışıkları da 1. gruba al": Zencefil Shot seçiliyken Zencefil + Coconut da 1. grupta; hiç olmayan 2. grupta; 3. grup kullanılmaz
+  const zsMix = karmaRule({ cats: [], productIds: ['zs'], mixed: true, third: true });
+  assert.deepEqual(kind([{ name: 'Zencefil Shot', qty: 1 }], zsMix), { kind: 'only', group: 'only' });
+  assert.deepEqual(kind([{ name: 'Zencefil Shot', qty: 1 }, { name: 'Coconut Mix', qty: 1 }], zsMix), { kind: 'mixed', group: 'only' });
+  assert.deepEqual(kind([{ name: 'Coconut Mix', qty: 1 }], zsMix), { kind: 'none', group: 'rest' });
+  assert.deepEqual(kind([{ name: 'Zencefil Shot', qty: 1 }, { name: 'Bilinmeyen Şey', qty: 1 }], zsMix), { kind: 'unmatched', group: 'rest' }); // tanınmayan yine 2. grupta
+  assert.deepEqual(kind([{ name: 'Zencefil Shot', qty: 1 }, { name: 'Coconut Mix', qty: 1 }], { ...zsMix, mixed: false }), { kind: 'mixed', group: 'rest' }); // kapalıyken eskisi gibi
   // Kombinasyon: eşik altı bileşimler gruplara ayrılır, toplam aynı kalır
   const mk = (k, items) => computeOrder({ k, sender: 'X', items }, ctx);
   const computed = [];
@@ -123,6 +130,8 @@ await test('Karma ayıklama: kategori + ürün seçimi; yalnızca seçilenler �
   assert.deepEqual(R.karma.split.map((x) => [x.key, x.orders, x.units]), [['only', 2, 5], ['rest', 3, 4]]);
   const R3 = analyzeCombos(computed, ctx, { min: 10, karmaRule: { ...rule, third: true } });
   assert.deepEqual(R3.karma.split.map((x) => [x.key, x.orders, x.units]), [['only', 2, 5], ['rest', 2, 3], ['none', 1, 1]]);
+  const RM = analyzeCombos(computed, ctx, { min: 10, karmaRule: { ...rule, third: true, mixed: true } });
+  assert.deepEqual(RM.karma.split.map((x) => [x.key, x.orders, x.units]), [['only', 3, 7], ['rest', 2, 2]]);
   assert.equal(analyzeCombos(computed, ctx, { min: 10 }).karma.split, null);
   // Mağaza seçimi: yalnızca seçilen mağazanın karması ayrılır, diğerininki "plain" (tek satır) kalır
   const { karmaStoreIds } = await import('../public/assets/js/shared/karma.js');

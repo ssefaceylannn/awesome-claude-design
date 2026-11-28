@@ -3,6 +3,8 @@
 //   rest → seçimdeki bir ürünün yanında seçim dışı ürün de olanlar ("Kutulu"); tanınmayan ürün
 //          içerenler ve okunamayan sayfalar da burada kalır
 //   none → seçimden hiç ürün olmayanlar ("Şişesiz") — yalnızca 3. grup açıksa; kapalıysa rest'e girer
+//   mixed ayarı açıksa: seçilen ürünü içeren HER sipariş (yanında başka ürün olsa da) only'ye girer;
+//          rest = seçilenden hiç olmayanlar + tanınmayanlar (3. grup bu durumda kullanılmaz)
 // Tanınmayan ürün içeren sipariş asla "only" sayılmaz: yanlışlıkla şişe grubuna düşmesin.
 import { fold } from './text.js';
 import { provinceOf } from './cities.js';
@@ -20,6 +22,7 @@ export function karmaRule(k) {
     productIds: Array.isArray(k && k.productIds) ? k.productIds : [],
     names: { only: names.only || d.names.only, rest: names.rest || d.names.rest, none: names.none || d.names.none },
     third: !!(k && k.third),
+    mixed: !!(k && k.mixed),
     cities: Array.isArray(k && k.cities) ? k.cities : d.cities,
     storeIds: Array.isArray(k && k.storeIds) ? k.storeIds : null,
   };
@@ -52,8 +55,10 @@ export function kindOfIds(ids, ctx, rule) {
   return inside === ids.length ? 'only' : inside ? 'mixed' : 'none';
 }
 
-/** Tür → grup (3. grup kapalıyken "none" da rest'e girer) */
-export const groupOfKind = (kind, rule) => (kind === 'only' ? 'only' : kind === 'none' && rule.third ? 'none' : 'rest');
+/** 3. grup kullanılıyor mu ("karışık da 1. gruba" açıkken kullanılmaz) */
+export const useThird = (rule) => !!rule.third && !rule.mixed;
+/** Tür → grup (3. grup kapalıyken "none" da rest'e girer; mixed ayarı açıksa karışık da 1. gruba) */
+export const groupOfKind = (kind, rule) => (kind === 'only' || (kind === 'mixed' && rule.mixed) ? 'only' : kind === 'none' && useThird(rule) ? 'none' : 'rest');
 
 /** Bir siparişin (computeOrder sonucu) türü ve grubu. Kampanya hediyeleri etikette yazmadığı için hesaba katılmaz. */
 export function classifyOrder(c, ctx, rule) {

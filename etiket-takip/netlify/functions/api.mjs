@@ -169,6 +169,8 @@ const SANITIZE = {
       productIds: Array.isArray(k && k.productIds) ? [...new Set(k.productIds.filter(id))].slice(0, 500) : [],
       names: { only: nm(names.only, d.names.only), rest: nm(names.rest, d.names.rest), none: nm(names.none, d.names.none) },
       third: !!(k && k.third),
+      // Seçilen ürünün yanında başka ürün de olan siparişler de 1. gruba
+      mixed: !!(k && k.mixed),
       // Şehre göre ayırma: seçilen iller (etiketteki alıcı adresinin ili)
       cities: Array.isArray(k && k.cities) ? [...new Set(k.cities.map((c) => str(c, 40)).filter(Boolean))].slice(0, 81) : d.cities,
       // Karma ayırmanın yapılacağı mağazalar (null = henüz seçilmedi → varsayılan mağaza adları)

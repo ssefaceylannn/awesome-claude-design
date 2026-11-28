@@ -62,7 +62,7 @@ export default async function combosPage(ctx) {
         <label class="f">En az sipariş <span class="hint">altı karmaya</span><input type="number" class="input sm" id="min" min="1" max="999" value="${min}" style="width:90px"></label>
         <label class="check small" style="margin-bottom:6px" title="Yükleme ya da saat seçiliyken geçerlidir"><input type="checkbox" id="again" ${withAgain ? 'checked' : ''}> Yüklemede yeniden gelen (daha önce kaydedilmiş) siparişleri de say</label>
         <label class="f">Kombinasyona dahil kampanyalar <span class="hint">yalnızca bu sayfa</span><div id="rw" style="width:260px"></div></label>
-        <label class="check small" style="margin-bottom:6px" title="Kategoriler ve grup adları Karma Ayıklama sayfasından değiştirilir"><input type="checkbox" id="ksplit" ${splitOn ? 'checked' : ''}> Karmayı ayır: ${['only', 'rest', ...(kp.third ? ['none'] : [])].map((k, i) => html`${i ? ' / ' : ''}<b>${kp.names[k]}</b>`)} <a href="#/karma" class="muted">(kural: Etiket Ayıklama)</a></label>
+        <label class="check small" style="margin-bottom:6px" title="Kategoriler ve grup adları Karma Ayıklama sayfasından değiştirilir"><input type="checkbox" id="ksplit" ${splitOn ? 'checked' : ''}> Karmayı ayır: ${['only', 'rest', ...(kp.third && !kp.mixed ? ['none'] : [])].map((k, i) => html`${i ? ' / ' : ''}<b>${kp.names[k]}</b>`)} <a href="#/karma" class="muted">(kural: Etiket Ayıklama)</a></label>
       </div></div>
       <div id="body" style="margin-top:16px"></div>
     </div>

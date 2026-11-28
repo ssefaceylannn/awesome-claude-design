@@ -12,7 +12,7 @@ import { printPdf } from '../core/pdfprint.js';
 import { state, isAdmin } from '../core/api.js';
 import { readLabels } from '../core/labels.js';
 import { computeOrder } from '../shared/calc.js';
-import { classifyOrder, classifyCity, productInRule, ruleEmpty, KIND_LABEL, CITY_KIND_LABEL } from '../shared/karma.js';
+import { classifyOrder, classifyCity, productInRule, ruleEmpty, useThird, KIND_LABEL, CITY_KIND_LABEL } from '../shared/karma.js';
 import { PROVINCES } from '../shared/cities.js';
 import { karmaPref, saveKarma } from '../core/karmapref.js';
 import { handOff } from '../core/handoff.js';
@@ -36,7 +36,7 @@ export default async function karmaPage(ctx) {
   const pcat = (id) => { const p = state.ctx.productsById.get(id); return (p && p.category) || ''; };
   const dirty = () => JSON.stringify(rule) !== JSON.stringify(saved);
   // Ölçüte göre gruplar, adları ve "geri kalan" grup
-  const groups = () => (mode === 'city' ? ['in', 'out'] : ['only', 'rest', ...(rule.third ? ['none'] : [])]);
+  const groups = () => (mode === 'city' ? ['in', 'out'] : ['only', 'rest', ...(useThird(rule) ? ['none'] : [])]);
   const restKey = () => (mode === 'city' ? 'out' : 'rest');
   const cityLabel = () => (rule.cities.length ? (rule.cities.length <= 3 ? rule.cities.join(', ') : `${rule.cities.slice(0, 2).join(', ')} +${rule.cities.length - 2} il`) : 'Seçilen iller');
   const gname = (g) => (g === 'in' ? cityLabel() : g === 'out' ? 'Diğer şehirler' : rule.names[g]);
@@ -55,11 +55,12 @@ export default async function karmaPage(ctx) {
           <div class="f">Ürünler <span class="hint">kategoriden bağımsız tek tek de seçilebilir; seçilen kategorilere ek olarak sayılır</span><div id="prods" style="max-width:520px;margin-top:6px"></div></div>
           <div class="f">Karma ayırma yapılacak mağazalar <span class="hint">Günlük Dağıtım ve Kombinasyon Analizi yalnızca bu mağazaların karmasını ayırır; diğerlerinin karması tek paket kalır</span><div id="kstores" style="max-width:520px;margin-top:6px"></div></div>
           <div class="row wrap" style="gap:12px;align-items:flex-end">
-            <label class="f">1. grup adı <span class="hint">yalnızca seçilenler</span><input class="input" data-name="only" maxlength="40" value="${rule.names.only}" style="width:200px"></label>
-            <label class="f">2. grup adı <span class="hint">seçilen + seçim dışı</span><input class="input" data-name="rest" maxlength="40" value="${rule.names.rest}" style="width:200px"></label>
+            <label class="f">1. grup adı <span class="hint" id="h1">yalnızca seçilenler</span><input class="input" data-name="only" maxlength="40" value="${rule.names.only}" style="width:200px"></label>
+            <label class="f">2. grup adı <span class="hint" id="h2">seçilen + seçim dışı</span><input class="input" data-name="rest" maxlength="40" value="${rule.names.rest}" style="width:200px"></label>
             <label class="f">3. grup adı <span class="hint">seçilenden hiç yok</span><input class="input" data-name="none" maxlength="40" value="${rule.names.none}" style="width:200px"></label>
             <label class="check" style="margin-bottom:8px"><input type="checkbox" id="third" ${rule.third ? 'checked' : ''}> 3. grubu kullan</label>
           </div>
+          <label class="check"><input type="checkbox" id="mixed" ${rule.mixed ? 'checked' : ''}> Seçilen ürünün yanında başka ürün de olan siparişleri de 1. gruba al <span class="hint">(ör. Ginger Shot seçiliyken “Ginger + Coconut” siparişi de ayrılır)</span></label>
         </div>
         <div class="stack" id="ruleCity" style="gap:10px">
           <div class="f">İl <span class="hint">etiketteki alıcı adresinin ili; birden çok il seçilebilir</span><div id="cities" style="max-width:420px;margin-top:6px"></div></div>
@@ -85,7 +86,11 @@ export default async function karmaPage(ctx) {
     ctx.el.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
     $('#ruleProd').classList.toggle('hidden', mode !== 'product');
     $('#ruleCity').classList.toggle('hidden', mode !== 'city');
-    $('#ruleSub').textContent = mode === 'city' ? 'Alıcısı seçilen ilde olan siparişler ayrı PDF\'e ayrılır' : 'Seçilen kategori ve ürünlerden başka ürün içermeyen siparişler 1. gruba ayrılır';
+    $('#ruleSub').textContent = mode === 'city' ? 'Alıcısı seçilen ilde olan siparişler ayrı PDF\'e ayrılır' : rule.mixed ? 'Seçilen kategori ya da üründen en az biri olan siparişler 1. gruba ayrılır' : 'Seçilen kategori ve ürünlerden başka ürün içermeyen siparişler 1. gruba ayrılır';
+    $('#h1').textContent = rule.mixed ? 'seçileni içerenler' : 'yalnızca seçilenler';
+    $('#h2').textContent = rule.mixed ? 'seçilenden hiç yok' : 'seçilen + seçim dışı';
+    $('#third').disabled = !!rule.mixed;
+    $('#third').closest('label').title = rule.mixed ? 'Karışık siparişler 1. gruba alınırken 3. grup kullanılmaz' : '';
   }
   ctx.el.querySelector('.tabs').addEventListener('click', (e) => {
     const b = e.target.closest('[data-mode]');
@@ -107,7 +112,7 @@ export default async function karmaPage(ctx) {
       $('#ruleNote').textContent = rule.cities.length ? `İki PDF çıkar: “${cityLabel()}” ve “Diğer şehirler”. İli okunamayan etiket “Diğer şehirler”de kalır ve uyarı verilir.` : 'Şu an il seçili değil: hiçbir sipariş ayrılmaz.';
     } else {
       const sel = [...rule.cats, ...rule.productIds];
-      $('#ruleNote').textContent = `Kombinasyon Analizi'nde de bu kural kullanılır: “Karma Siparişler” satırı ${['only', 'rest', ...(rule.third ? ['none'] : [])].map((g) => `“${rule.names[g]}”`).join(', ')} olarak ayrılır.`
+      $('#ruleNote').textContent = `Kombinasyon Analizi'nde de bu kural kullanılır: “Karma Siparişler” satırı ${['only', 'rest', ...(useThird(rule) ? ['none'] : [])].map((g) => `“${rule.names[g]}”`).join(', ')} olarak ayrılır.`
         + (sel.length ? '' : ' Şu an hiçbir şey seçili değil: hiçbir sipariş 1. gruba ayrılmaz.');
     }
     mount($('#ruleBar'), dirty()
@@ -122,6 +127,7 @@ export default async function karmaPage(ctx) {
     drawRuleBar(); render();
   }));
   $('#third').addEventListener('change', (e) => { rule.third = e.target.checked; changed(); });
+  $('#mixed').addEventListener('change', (e) => { rule.mixed = e.target.checked; showMode(); changed(); });
   $('#ruleBar').addEventListener('click', async (e) => {
     // Vazgeç: sayfayı kayıtlı kuralla yeniden kur (okunan PDF ve elle değişiklikler korunur)
     if (e.target.closest('#ruleUndo')) return karmaPage(ctx);
@@ -130,7 +136,7 @@ export default async function karmaPage(ctx) {
     busy(b, true, 'Kaydediliyor…');
     try {
       const sname = (sid) => (state.config.stores.find((st) => st.id === sid) || {}).name || sid;
-      await saveKarma(rule, `ayıklama kuralı: ${[...rule.cats, ...rule.productIds.map(pname)].join(', ') || 'ürün seçimi boş'}${rule.third ? ' · 3. grup açık' : ''} · mağazalar: ${rule.storeIds.map(sname).join(', ') || '—'} · il: ${rule.cities.join(', ') || '—'}`);
+      await saveKarma(rule, `ayıklama kuralı: ${[...rule.cats, ...rule.productIds.map(pname)].join(', ') || 'ürün seçimi boş'}${useThird(rule) ? ' · 3. grup açık' : ''}${rule.mixed ? ' · karışıklar da 1. grupta' : ''} · mağazalar: ${rule.storeIds.map(sname).join(', ') || '—'} · il: ${rule.cities.join(', ') || '—'}`);
       saved = karmaPref(); rule = structuredClone(saved);
       toast('Kural kaydedildi', 'ok'); drawRuleBar();
     } catch (err) { toast(err.message, 'err'); busy(b, false); }
@@ -204,7 +210,7 @@ export default async function karmaPage(ctx) {
     const warns = read.log.filter((l) => l.type === 'error' || l.type === 'dup' || l.type === 'warn');
     const G = groups();
     const looseTxt = loose ? `${n(loose)} sipariş dışı sayfa dahil` : '';
-    const sub = { only: 'yalnızca seçilenler', rest: looseTxt || 'seçilen + seçim dışı', none: 'seçilenden hiç yok', in: 'alıcısı seçilen ilde', out: looseTxt || 'başka illere giden' };
+    const sub = { only: rule.mixed ? 'seçileni içerenler' : 'yalnızca seçilenler', rest: looseTxt || (rule.mixed ? 'seçilenden hiç yok' : 'seçilen + seçim dışı'), none: 'seçilenden hiç yok', in: 'alıcısı seçilen ilde', out: looseTxt || 'başka illere giden' };
     const empty = mode === 'city' ? !rule.cities.length : ruleEmpty(rule);
     mount($('#out'), html`<div class="stack">
       <div class="kpis">

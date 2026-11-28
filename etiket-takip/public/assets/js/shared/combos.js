@@ -2,7 +2,7 @@
 // En az `min` siparişi olan bileşimler ayrı satırda, kalanlar "Karma Siparişler" altında toplanır.
 // Ayrıca Trendyol "Gönderime Hazır" sayfasından kopyalanan grup metnini okur.
 import { fold } from './text.js';
-import { kindOfIds, groupOfKind, GROUPS } from './karma.js';
+import { kindOfIds, groupOfKind, GROUPS, useThird } from './karma.js';
 
 export const KARMA = 'Karma Siparişler';
 
@@ -67,7 +67,7 @@ export function analyzeCombos(computed, ctx, { min = 10, includeRewards = false,
   }
   let split = null;
   if (karmaRule) {
-    split = [...GROUPS.filter((k) => k !== 'none' || karmaRule.third), 'plain'].map((key) => ({ key, orders: 0, units: 0, groups: [] }));
+    split = [...GROUPS.filter((k) => k !== 'none' || useThird(karmaRule)), 'plain'].map((key) => ({ key, orders: 0, units: 0, groups: [] }));
     const only = Array.isArray(karmaRule.storeIds) ? new Set(karmaRule.storeIds) : null;
     for (const g of small) {
       const kind = groupOfKind(kindOfIds(g.parts.map((p) => p.id), ctx, karmaRule), karmaRule);
