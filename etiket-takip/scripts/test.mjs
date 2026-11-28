@@ -588,4 +588,22 @@ await test('Yeniden gönderim: "Sipariş Mesajı" başlığı alıcı adı sayı
   assert.deepEqual(parseOrderList(tricky).map((o) => o.recipient), ['Can Örnek', 'Ece Örnek', 'Efe Örnek', 'Ada Örnek']);
 });
 
+await test('Stok kontrol: KALAN sayfası okunur, ilk yüklenen önce pay alır, yetmeyen sipariş stok ayırmaz', async () => {
+  const { parseStockRows, matchStock, checkStock } = await import('../public/assets/js/shared/stock.js');
+  const items = parseStockRows([['SKU', 'MARKA', 'ÜRÜN ADI', 'GİRİŞ', 'ÇIKIŞ', 'KALAN'], ['A-1', 'M', 'Ürün A', '10', '5', '5'], ['B-1', 'M', 'Ürün B', '9', '7', '1.234'], ['', '', '', '', '', '']]);
+  assert.deepEqual(items.map((i) => i.qty), [5, 1234]);
+  const stock = matchStock([{ id: 'a', name: 'Ürün A', sku: 'a-1' }, { id: 'b', name: 'ürün b', sku: '' }, { id: 'c', name: 'Ürün C', sku: 'C-1' }], items);
+  assert.equal(stock.get('a').qty, 5);
+  assert.equal(stock.get('b').by, 'name');
+  assert.ok(!stock.has('c'));
+  const ord = (no, lines, rewards = []) => ({ order: { no }, lines: lines.map(([productId, units]) => ({ productId, units })), rewards });
+  const R = checkStock([ord('1', [['a', 3]]), ord('2', [['a', 2]], [{ productId: 'a', qty: 1 }]), ord('3', [['a', 2], ['c', 4]])], stock);
+  assert.deepEqual(R.blocked.map((b) => b.c.order.no), ['2']); // 3 + (2+1) > 5; 3. sipariş kalan 2 ile çıkar
+  assert.equal(R.ok, 2);
+  assert.deepEqual(R.rows.map((r) => [r.productId, r.need, r.short]), [['a', 8, 3]]);
+  assert.equal(R.notInSheet.get('c'), 4);
+  // Kampanya hediyesi sayılmazsa 2. sipariş de çıkar
+  assert.equal(checkStock([ord('1', [['a', 3]]), ord('2', [['a', 2]], [{ productId: 'a', qty: 1 }])], stock, { includeRewards: false }).blocked.length, 0);
+});
+
 console.log(`\n${passed} test geçti`);

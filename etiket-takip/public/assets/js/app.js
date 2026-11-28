@@ -11,6 +11,7 @@ const NAV = [
     { id: 'upload', label: 'Etiket Yükle', icon: 'upload', role: 'personel' },
     { id: 'resend', label: 'Yeniden Gönderim', icon: 'refresh', role: 'personel' },
     { id: 'production', label: 'Üretim Listesi', icon: 'factory' },
+    { id: 'stock', label: 'Stok Kontrol', icon: 'box' },
     { id: 'combos', label: 'Kombinasyon Analizi', icon: 'copy' },
     { id: 'karma', label: 'Etiket Ayıklama', icon: 'split', role: 'personel' },
     { id: 'orders', label: 'Siparişler', icon: 'receipt' },

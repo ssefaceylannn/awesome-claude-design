@@ -4,6 +4,9 @@ import { COOKIE, getSecret, parseUsers, passwordTag, readCookie, safeEqual, sign
 import { del, getJSON, listKeys, pmap, setJSON, update } from '../lib/store.js';
 import { fold, hashStr, isYmd, orderKey } from '../../public/assets/js/shared/text.js';
 import { DEFAULT_NOISE } from '../../public/assets/js/shared/matcher.js';
+import { createContext, computeOrder } from '../../public/assets/js/shared/calc.js';
+import { parseCsv } from '../../public/assets/js/shared/csv.js';
+import { parseStockRows, matchStock, checkStock, stockSnapshot, uploadOrder, DEFAULT_STOCK_TIMES, STOCK_TIME_RANGE } from '../../public/assets/js/shared/stock.js';
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
@@ -180,8 +183,27 @@ const SANITIZE = {
     brandStores: s && s.brandStores && typeof s.brandStores === 'object'
       ? Object.fromEntries(Object.entries(s.brandStores).slice(0, 200).map(([b, ids]) => [str(b, 60), (Array.isArray(ids) ? ids : []).filter(id).slice(0, 200)]).filter(([b]) => b))
       : null,
+    // Stok kontrolü: Google E-Tablolar bağlantısı (yalnızca okunur) — { id, tab } ya da null
+    stockSheet: sheetRef(s && s.stockSheet),
+    // Otomatik stok kontrol saatleri (Türkiye saati, SS:DD)
+    stockTimes: stockTimes(s && s.stockTimes),
   }),
 };
+
+function stockTimes(v) {
+  if (!Array.isArray(v)) return DEFAULT_STOCK_TIMES.slice();
+  const ok = v.map((t) => String(t).trim().replace('.', ':')).map((t) => (/^\d:\d\d$/.test(t) ? '0' + t : t))
+    .filter((t) => /^([01]\d|2[0-3]):[0-5]\d$/.test(t) && t >= STOCK_TIME_RANGE[0] && t <= STOCK_TIME_RANGE[1]);
+  return [...new Set(ok)].sort().slice(0, 12);
+}
+
+/** Google E-Tablolar bağlantısı/kimliği → { id, tab }. Başka adresler kabul edilmez. */
+function sheetRef(v) {
+  if (!v || typeof v !== 'object') return null;
+  const m = String(v.id || v.url || '').match(/(?:\/spreadsheets\/d\/)?([a-zA-Z0-9_-]{20,100})/);
+  if (!m) return null;
+  return { id: m[1], tab: str(v.tab, 60) || 'KALAN' };
+}
 
 // ------------------------------------------------------------------ yardımcılar
 async function audit(user, action, detail) {
@@ -562,6 +584,73 @@ async function getOrders(url) {
   return json({ orders: source ? all.filter((o) => o.source === source) : all });
 }
 
+/** Tablonun sayfasını CSV olarak oku (yalnızca okuma) */
+async function fetchSheetCsv(ref) {
+  const src = `https://docs.google.com/spreadsheets/d/${ref.id}/gviz/tq?tqx=out:csv&headers=1&sheet=${encodeURIComponent(ref.tab || 'KALAN')}`;
+  let r;
+  try {
+    r = await fetch(src, { redirect: 'follow', signal: AbortSignal.timeout(15000) });
+  } catch {
+    throw new HttpError(502, 'Google E-Tablolar’a ulaşılamadı, biraz sonra tekrar deneyin');
+  }
+  const type = r.headers.get('content-type') || '';
+  // Herkese açık değilse Google giriş sayfası (HTML) döner
+  if (!r.ok || /text\/html/i.test(type)) throw new HttpError(502, 'Tablo okunamadı: “Bağlantıya sahip olan herkes görüntüleyebilir” olarak paylaşıldığından emin olun');
+  const csv = await r.text();
+  if (csv.length > 2_000_000) throw new HttpError(502, 'Tablo sayfası çok büyük');
+  return csv;
+}
+
+async function getStock() {
+  const ref = (await getConfig()).settings.stockSheet;
+  if (!ref || !ref.id) return json({ configured: false });
+  const csv = await fetchSheetCsv(ref);
+  return json({ configured: true, tab: ref.tab, csv, fetchedAt: nowIso() });
+}
+
+/**
+ * Zamanlanmış stok kontrolü (stock-cron fonksiyonu 10 dakikada bir çağırır). Saati gelmiş ve son 30 dakika
+ * içinde kalan, bugün henüz yapılmamış kontrol varsa: tabloyu okur, günün siparişleriyle karşılaştırır ve
+ * özeti stockrun/<gün> kaydına yazar. Tabloya hiçbir şey yazılmaz, stok düşülmez.
+ */
+export async function runDueStockChecks(now = new Date()) {
+  const tr = new Date(now.getTime() + 3 * 3600e3);
+  const date = tr.toISOString().slice(0, 10);
+  const hm = tr.toISOString().slice(11, 16);
+  const mins = (t) => +t.slice(0, 2) * 60 + +t.slice(3, 5);
+  const config = await getConfig();
+  const ref = config.settings.stockSheet;
+  if (!ref || !ref.id) return { skipped: 'tablo bağlı değil' };
+  const times = config.settings.stockTimes || DEFAULT_STOCK_TIMES;
+  const done = await getJSON(`stockrun/${date}`, {});
+  const due = times.filter((t) => t <= hm && mins(hm) - mins(t) < 30 && !done[t]);
+  if (!due.length) return { skipped: 'zamanı gelen kontrol yok', date, hm };
+  const slot = due[due.length - 1];
+  let rec;
+  try {
+    const items = parseStockRows(parseCsv(await fetchSheetCsv(ref)));
+    const ctx = createContext(config);
+    const day = await getJSON(`day/${date}`);
+    const orders = uploadOrder(((day && day.orders) || []).filter((o) => !o.summary));
+    const R = checkStock(orders.map((o) => computeOrder(o, ctx)), matchStock(config.products, items), { includeRewards: true });
+    rec = { at: nowIso(), ok: true, sheetRows: items.length, ...stockSnapshot(R, ctx) };
+  } catch (e) {
+    rec = { at: nowIso(), ok: false, error: str(e.message, 300) };
+  }
+  // Aynı dilimde kaçırılan önceki saatler de "atlandı" olarak işaretlenir (tekrar denenmez)
+  await update(`stockrun/${date}`, (cur) => {
+    const m = cur && typeof cur === 'object' ? cur : {};
+    for (const t of due) if (!m[t]) m[t] = t === slot ? rec : { at: nowIso(), ok: false, skipped: true, error: 'Kontrol zamanında çalışmadı, bir sonraki saatte yapıldı' };
+    return m;
+  }, {});
+  // Eski kayıtları temizle (60 günden eski)
+  if (hm >= '17:00') {
+    const old = (await listKeys('stockrun/')).filter((k) => k.slice(9) < addDays(date, -60));
+    await pmap(old, 6, (k) => del(k));
+  }
+  return { date, slot, ok: rec.ok };
+}
+
 async function removeFromIndex(entries) {
   const byBucket = new Map();
   for (const e of entries) {
@@ -679,6 +768,14 @@ export default async (req) => {
     if (path === 'labelnames' && m === 'GET') return json({ names: await getJSON('labelnames', {}) });
     if (path === 'import' && m === 'POST') return await importOrders(req, user);
     if (path === 'orders' && m === 'GET') return await getOrders(url);
+    // Stok kontrolü: tablonun KALAN sayfasını CSV olarak okur (yalnızca okuma; tabloya hiçbir şey yazılmaz)
+    if (path === 'stock' && m === 'GET') return await getStock();
+    if (path === 'stock/runs' && m === 'GET') {
+      const date = url.searchParams.get('date');
+      if (!isYmd(date)) throw new HttpError(400, 'Geçersiz tarih');
+      const cfg = await getConfig();
+      return json({ date, times: cfg.settings.stockTimes || DEFAULT_STOCK_TIMES, runs: await getJSON(`stockrun/${date}`, {}) });
+    }
     if (path === 'days' && m === 'GET') return json({ days: (await listKeys('day/')).map((k) => k.slice(4)).sort() });
 
     // ---------------------------------------------------------------- teslim alan (kim yaptı)

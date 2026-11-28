@@ -196,6 +196,20 @@ export async function exportTable(name, sheetTitle, columns, rows) {
   await save(wb, name);
 }
 
+/** Birden çok sayfalı basit tablo: sheets = [{ title, columns, rows }] */
+export async function exportSheets(name, sheets, sub) {
+  const ExcelJS = await lib();
+  const wb = new ExcelJS.Workbook();
+  for (const sh of sheets) {
+    const ws = wb.addWorksheet(sh.title.slice(0, 31), { views: [{ state: 'frozen', ySplit: 3 }] });
+    ws.columns = sh.columns.map((c) => ({ width: c.width || 16 }));
+    title(ws, sh.title, `${sub || ''}${sub ? ' · ' : ''}Oluşturma: ${trDateTime(new Date().toISOString())}`, sh.columns.length);
+    header(ws, 3, sh.columns.map((c) => c.label));
+    if (sh.rows.length) body(ws, 4, sh.rows, sh.columns.map((c, i) => (c.num ? i : -1)).filter((i) => i >= 0));
+  }
+  await save(wb, name);
+}
+
 /**
  * Sabit sıralı liste: katalogdaki TÜM ürünler, Ürünler sayfasındaki sırayla, 0 olanlar dahil.
  * Başka bir tabloya yapıştırmak için: ilk satır başlık, ürün satırları hep aynı yerde.
